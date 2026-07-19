@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>space-slop</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #05070f; overflow: hidden;
+      color: #cbd5e1; font-family: system-ui, -apple-system, sans-serif; }
+    #wrap { display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; gap: .6rem; }
+    canvas { background: #05070f; display: block; border: 1px solid #1e293b;
+      outline: none; }
+    #status { font-size: .85rem; color: #64748b; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="canvas" width="1000" height="700"
+            tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <div id="status">loading…</div>
+  </div>
+  <script>
+    const statusEl = document.getElementById('status');
+    const canvas = document.getElementById('canvas');
+    // Emscripten looks for a global `Module`; raylib renders into Module.canvas.
+    var Module = {
+      canvas,
+      print:    (...a) => console.log(...a),
+      printErr: (...a) => console.error(...a),
+      setStatus: (t) => { statusEl.textContent = t; },
+      onRuntimeInitialized: () => {
+        canvas.focus(); // so keyboard input reaches the game
+        statusEl.textContent = 'W/↑ thrust · A/D or ←/→ turn · wheel zoom · R reset';
+      },
+    };
+    canvas.addEventListener('click', () => canvas.focus());
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>
