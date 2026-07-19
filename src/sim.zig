@@ -39,6 +39,27 @@ pub const Planet = struct {
     pos: Vec2,
     mass: f32,
     radius: f32,
+    /// Sphere-of-influence radius: this planet's gravity only applies within
+    /// it (see World.gravityAt). Set explicitly per body — it deliberately
+    /// does NOT follow from mass, so a moon can pull hard inside a small
+    /// bubble without perturbing orbits around the primary. Defaults to
+    /// infinite (single-body worlds just work).
+    soi: f32 = std.math.inf(f32),
+    /// Gravity stops growing inside max(radius, core): needed when a body is
+    /// rendered much smaller than its mass warrants — without it, a close
+    /// flyby produces accelerations the fixed timestep can't integrate and
+    /// the ship gets a spurious energy kick that can eject it from orbit.
+    core: f32 = 0,
+    /// Frame acceleration of a scripted moving body (e.g. a moon on a
+    /// kinematic circle). Ships inside this body's SOI are carried along by
+    /// it, which makes energy relative to the body conserved — orbits ride
+    /// with the moon instead of leaking out as it moves away (Kerbal-style
+    /// integration in the moon's frame, expressed in world coordinates).
+    acc: Vec2 = .{},
+    /// World velocity of a scripted moving body. Used to judge whether a
+    /// ship inside the SOI is bound to the body or on a fast flyby (capture
+    /// assist applies only to the former, so slingshots stay untouched).
+    vel: Vec2 = .{},
 };
 
 pub const Ship = struct {
@@ -64,22 +85,43 @@ pub const World = struct {
     pub const thrust_accel: f32 = 70.0;
     /// Turn speed in radians/second.
     pub const turn_rate: f32 = 2.8;
+    /// Capture assist (arcade): bound ships in the outer part of a moon's
+    /// SOI feel a gentle drag on their moon-relative velocity, fraction/s.
+    /// Pulls a ballistic arrival's apoapsis off the SOI boundary within a
+    /// revolution or two so it settles into orbit with no braking burn.
+    pub const capture_drag: f32 = 0.12;
+    /// Capture drag only acts beyond this fraction of the SOI radius, so
+    /// parked orbits deeper inside feel nothing and never decay.
+    pub const capture_zone: f32 = 0.6;
 
     planets: []const Planet,
     ship: Ship,
 
-    /// Net gravitational acceleration felt at `point` from every planet.
-    /// Distance is clamped to each planet's radius so the force stays finite
-    /// (and orbits stay pure inverse-square everywhere outside the surface).
-    pub fn gravityAt(self: World, point: Vec2) Vec2 {
-        var acc: Vec2 = .{};
-        for (self.planets) |p| {
-            const d = p.pos.sub(point);
-            const dist = @max(d.len(), p.radius);
-            const mag = g * p.mass / (dist * dist);
-            acc = acc.add(d.normalized().scale(mag));
+    /// Index of the planet whose sphere of influence contains `point`:
+    /// the first moon (planets[1..]) whose SOI covers it, else the primary
+    /// if its own SOI does, else null — deep space, no gravity at all.
+    pub fn dominantIndex(self: World, point: Vec2) ?usize {
+        if (self.planets.len == 0) return null;
+        var i: usize = 1;
+        while (i < self.planets.len) : (i += 1) {
+            if (point.sub(self.planets[i].pos).len() < self.planets[i].soi) return i;
         }
-        return acc;
+        if (point.sub(self.planets[0].pos).len() < self.planets[0].soi) return 0;
+        return null;
+    }
+
+    /// Gravitational acceleration at `point` — arcade patched conics: only
+    /// the body whose sphere of influence contains the point pulls, so orbits
+    /// around every body are clean two-body ellipses with no third-body
+    /// drift (a summed field pumps eccentricity until the ship crashes).
+    /// Distance is clamped to the planet's radius so the force stays finite.
+    pub fn gravityAt(self: World, point: Vec2) Vec2 {
+        const idx = self.dominantIndex(point) orelse return .{};
+        const p = self.planets[idx];
+        const d = p.pos.sub(point);
+        const dist = @max(d.len(), @max(p.radius, p.core));
+        const mag = g * p.mass / (dist * dist);
+        return d.normalized().scale(mag);
     }
 
     /// Advance the ship by `dt` seconds using semi-implicit Euler, which keeps
@@ -88,6 +130,23 @@ pub const World = struct {
         self.ship.angle += input.turn * turn_rate * dt;
 
         var acc = self.gravityAt(self.ship.pos);
+        if (self.dominantIndex(self.ship.pos)) |idx| {
+            const p = self.planets[idx];
+            // Ride along with a moving SOI owner (see Planet.acc).
+            acc = acc.add(p.acc);
+            // Capture assist — moons only: dragging inside the primary's SOI
+            // would decay every ordinary orbit. Applies only to ships that
+            // are bound to the moon (negative relative energy) in the outer
+            // SOI; fast hyperbolic flybys keep full slingshot behaviour.
+            if (idx > 0) {
+                const dist = self.ship.pos.sub(p.pos).len();
+                if (dist > capture_zone * p.soi) {
+                    const v_rel = self.ship.vel.sub(p.vel);
+                    const energy = v_rel.lenSq() / 2.0 - g * p.mass / @max(dist, @max(p.radius, p.core));
+                    if (energy < 0) acc = acc.add(v_rel.scale(-capture_drag));
+                }
+            }
+        }
         self.ship.thrusting = input.thrust;
         if (input.thrust) {
             acc = acc.add(Vec2.fromAngle(self.ship.angle).scale(thrust_accel));
@@ -152,6 +211,52 @@ test "circular orbit keeps a roughly constant radius" {
         const radius = world.ship.pos.len();
         try testing.expect(radius > r * 0.9 and radius < r * 1.1);
     }
+}
+
+test "spheres of influence partition gravity" {
+    const world: World = .{
+        .planets = &.{
+            .{ .pos = .{ .x = 0, .y = 0 }, .mass = 8000, .radius = 140, .soi = 2500 },
+            .{ .pos = .{ .x = 1500, .y = 0 }, .mass = 3000, .radius = 40, .soi = 400 },
+        },
+        .ship = .{ .pos = .{}, .vel = .{} },
+    };
+
+    // Inside the moon's SOI: pulled toward the moon (+x), Earth ignored.
+    const p: Vec2 = .{ .x = 1200, .y = 0 };
+    try testing.expectEqual(@as(?usize, 1), world.dominantIndex(p));
+    try testing.expect(world.gravityAt(p).x > 0);
+
+    // Between the SOIs: pulled toward Earth (-x), moon ignored.
+    const q: Vec2 = .{ .x = 1000, .y = 0 };
+    try testing.expectEqual(@as(?usize, 0), world.dominantIndex(q));
+    try testing.expect(world.gravityAt(q).x < 0);
+
+    // Beyond Earth's SOI (and outside the moon's): deep space, zero gravity.
+    const far: Vec2 = .{ .x = 0, .y = 3000 };
+    try testing.expectEqual(@as(?usize, null), world.dominantIndex(far));
+    try testing.expectEqual(@as(f32, 0), world.gravityAt(far).len());
+}
+
+test "capture assist drags bound ships in the outer SOI but not flybys" {
+    const planets = [_]Planet{
+        .{ .pos = .{}, .mass = 8000, .radius = 140, .soi = 2500 },
+        .{ .pos = .{ .x = 1500, .y = 0 }, .mass = 3000, .radius = 40, .soi = 400, .core = 110 },
+    };
+    const dt: f32 = 0.01;
+    // 350 px from the moon (outer SOI; gravity there is pure +x, so any
+    // y-velocity change comes from the drag alone).
+    const pos: Vec2 = .{ .x = 1150, .y = 0 };
+
+    // Slow ship: bound to the moon => y-velocity gets damped.
+    var bound: World = .{ .planets = &planets, .ship = .{ .pos = pos, .vel = .{ .x = 0, .y = 40 } } };
+    bound.step(dt, .{});
+    try testing.expectApproxEqRel(40.0 * (1.0 - World.capture_drag * dt), bound.ship.vel.y, 1e-4);
+
+    // Fast ship: hyperbolic flyby => no drag, y-velocity untouched.
+    var flyby: World = .{ .planets = &planets, .ship = .{ .pos = pos, .vel = .{ .x = 0, .y = 200 } } };
+    flyby.step(dt, .{});
+    try testing.expectApproxEqRel(@as(f32, 200), flyby.ship.vel.y, 1e-5);
 }
 
 test "thrust along heading increases speed" {

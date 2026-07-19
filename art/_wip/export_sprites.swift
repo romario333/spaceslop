@@ -24,7 +24,7 @@ for y in 0..<sh { for x in 0..<sw {
     let r = UInt8((c.redComponent * 255).rounded()), g = UInt8((c.greenComponent * 255).rounded()), b = UInt8((c.blueComponent * 255).rounded())
     let i = (y * sw + x) * 4
     // Image sources use a flat magenta key. Treat strongly-magenta pixels as background.
-    let keyed = r > 190 && b > 190 && g < 90
+    let keyed = r > 160 && b > 130 && Int(r) + Int(b) > Int(g) * 2 + 200
     rgba[i] = keyed ? 0 : r; rgba[i+1] = keyed ? 0 : g; rgba[i+2] = keyed ? 0 : b
     rgba[i+3] = keyed ? 0 : 255
 } }

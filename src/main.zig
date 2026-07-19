@@ -43,9 +43,10 @@ const Theme = enum {
     }
 };
 
-/// One theme's sprites. `px_scale` is world pixels per texture pixel: the
-/// pixelart theme exports at 1x, scifi-60s at 2x (see art/<theme>/SCALE.txt),
-/// so both render Earth at exactly its 280 px world diameter.
+/// One theme's sprites. `px_scale` is world pixels per texture pixel: both
+/// themes export at world size (see art/<theme>/SCALE.txt), zero-padding
+/// trimmed, so a planet texture spans exactly its physics diameter — Earth
+/// renders at its full 280 px world diameter and collisions line up.
 const SpriteSet = struct {
     earth: rl.Texture2D,
     moon: rl.Texture2D,
@@ -95,7 +96,7 @@ const SpriteSet = struct {
 
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
 const Trail = struct {
-    const cap = 480;
+    const cap = 4000;
     points: [cap]Vec2 = undefined,
     head: usize = 0,
     len: usize = 0,
@@ -145,20 +146,37 @@ fn run() !void {
     }
 
     // --- Sprites & theme ---------------------------------------------------
-    // Pixelart samples nearest-neighbour so its pixels stay crisp; scifi-60s
-    // is a 2x export drawn at half size, so it gets bilinear filtering.
-    var theme: Theme = .pixelart;
+    // Pixelart samples nearest-neighbour so its (2x2 world px) pixels stay
+    // crisp; scifi-60s is smooth illustration, so it gets bilinear filtering.
+    var theme: Theme = .scifi_60s;
     const sprite_sets = [_]SpriteSet{
-        try SpriteSet.load("pixelart", 2.0, .point),
+        try SpriteSet.load("pixelart", 1.0, .point),
         try SpriteSet.load("scifi-60s", 1.0, .bilinear),
     };
     defer for (sprite_sets) |s| s.unload();
 
     // --- World setup -------------------------------------------------------
+    // Gravity uses arcade patched conics (see sim.gravityAt): inside the
+    // moon's sphere of influence only the moon pulls, everywhere else only
+    // Earth does, so orbits around both bodies are clean stable ellipses.
+    // The moon is small on screen but pulls hard (mass on par with what a
+    // much larger body would have): a deep well inside a tight 400 px SOI
+    // bubble, plus the sim's capture assist, means a ship that coasts in
+    // slowly settles into orbit on its own — while fast flybys slingshot
+    // through undisturbed and Earth orbits below ~1100 px never feel the
+    // moon at all. Beyond Earth's SOI there is no gravity: deep space.
     var planets = [_]sim.Planet{
-        .{ .pos = .{ .x = 0, .y = 0 }, .mass = 8000, .radius = 140 },
-        .{ .pos = .{ .x = 1050, .y = -440 }, .mass = 3000, .radius = 84 },
+        .{ .pos = .{ .x = 0, .y = 0 }, .mass = 8000, .radius = 140, .soi = 2500 },
+        .{ .pos = .{ .x = 1383, .y = -580 }, .mass = 3000, .radius = 40, .soi = 400, .core = 110 },
     };
+
+    // The moon slowly circles Earth: it covers its own diameter in ~7 s —
+    // clearly visible, but slow next to ship speeds (~10% of the physically
+    // correct orbital rate), so leading the moon on an outbound flight stays
+    // easy and its SOI doesn't run away from a ship trying to be captured.
+    const moon_orbit_r = planets[1].pos.sub(planets[0].pos).len();
+    const moon_omega: f32 = 0.008; // rad/s
+    var moon_angle: f32 = std.math.atan2(planets[1].pos.y, planets[1].pos.x);
 
     const start_r: f32 = 340;
     const orbit_speed = sim.World.circularOrbitSpeed(planets[0].mass, start_r);
@@ -182,17 +200,19 @@ fn run() !void {
     var iss_angle: f32 = 0;
 
     // Static starfield in world space, generated once with a fixed seed.
-    var stars: [500]rl.Vector2 = undefined;
+    // Wide enough to cover the moon's whole orbit (radius ~2200).
+    var stars: [1500]rl.Vector2 = undefined;
     var prng = std.Random.DefaultPrng.init(0x5EED_1234);
     const rng = prng.random();
     for (&stars) |*s| {
         s.* = .{
-            .x = rng.float(f32) * 4000.0 - 2000.0,
-            .y = rng.float(f32) * 4000.0 - 2000.0,
+            .x = rng.float(f32) * 7000.0 - 3500.0,
+            .y = rng.float(f32) * 7000.0 - 3500.0,
         };
     }
 
     var trail: Trail = .{};
+    var show_soi = true;
 
     var cam: rl.Camera2D = .{
         .target = v(world.ship.pos),
@@ -217,6 +237,7 @@ fn run() !void {
         }
         if (!is_web and rl.isKeyPressed(.f)) rl.toggleFullscreen();
         if (rl.isKeyPressed(.t)) theme = theme.next();
+        if (rl.isKeyPressed(.o)) show_soi = !show_soi;
 
         // Zoom on scroll, keep camera centred on the current window size.
         const wheel = rl.getMouseWheelMove();
@@ -230,6 +251,15 @@ fn run() !void {
         accumulator += rl.getFrameTime();
         if (accumulator > 0.25) accumulator = 0.25; // avoid spiral of death
         while (accumulator >= fixed_dt) : (accumulator -= fixed_dt) {
+            // The moon is kinematic: it moves on a fixed circle and the ship
+            // physics just sees its updated position each step. Its frame
+            // acceleration (centripetal, toward Earth) lets ships in its SOI
+            // ride along with it (see sim.Planet.acc).
+            moon_angle = @mod(moon_angle + moon_omega * fixed_dt, std.math.tau);
+            const moon_dir = Vec2.fromAngle(moon_angle);
+            planets[1].pos = planets[0].pos.add(moon_dir.scale(moon_orbit_r));
+            planets[1].vel = (Vec2{ .x = -moon_dir.y, .y = moon_dir.x }).scale(moon_omega * moon_orbit_r);
+            planets[1].acc = moon_dir.scale(-moon_omega * moon_omega * moon_orbit_r);
             world.step(fixed_dt, input);
             trail.push(world.ship.pos);
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
@@ -255,9 +285,21 @@ fn run() !void {
                 .classic => null,
             };
 
+            // Sphere-of-influence boundaries (toggle with O). Only the body
+            // whose ring you are inside pulls on the ship; outside Earth's
+            // ring nothing does.
+            if (show_soi) {
+                for (planets) |p| {
+                    rl.drawRing(v(p.pos), p.soi - 1.5, p.soi + 1.5, 0, 360, 240, .{ .r = 170, .g = 140, .b = 255, .a = 110 });
+                }
+            }
+
             if (sprites) |s| {
                 s.drawSprite(s.earth, planets[0].pos, 0, 1.0);
-                s.drawSprite(s.moon, planets[1].pos, 0, 1.0);
+                // Moon textures are exported for the old 84 px physics radius;
+                // scale down so the sprite spans the current physics diameter.
+                const moon_scale = planets[1].radius * 2.0 / (@as(f32, @floatFromInt(s.moon.width)) * s.px_scale);
+                s.drawSprite(s.moon, planets[1].pos, 0, moon_scale);
             } else {
                 for (planets) |p| {
                     rl.drawCircleV(v(p.pos), p.radius, .{ .r = 90, .g = 120, .b = 160, .a = 255 });
@@ -305,7 +347,7 @@ fn drawShip(ship: sim.Ship, sprites: ?*const SpriteSet) void {
 }
 
 /// Flat-shape ISS for the classic theme: solar panels, truss, centre module.
-/// Footprint matches the sprite versions at their doubled world scale.
+/// Footprint roughly matches the sprite versions' world size.
 fn drawIssClassic(pos: Vec2, rotation_deg: f32) void {
     rl.drawRectanglePro(
         .{ .x = pos.x, .y = pos.y, .width = 44, .height = 28 },
@@ -327,19 +369,22 @@ var hud_buf: [128]u8 = undefined;
 fn drawHud(world: sim.World, theme: Theme) void {
     const ship = world.ship;
     const speed = ship.vel.len();
-    // Altitude above the primary planet's surface.
-    const p0 = world.planets[0];
-    const altitude = ship.pos.sub(p0.pos).len() - p0.radius;
+    // Altitude above the surface of whichever body's SOI the ship is in;
+    // relative to Earth when coasting through gravity-free deep space.
+    const soi_idx = world.dominantIndex(ship.pos);
+    const soi_name: [:0]const u8 = if (soi_idx) |i| (if (i == 0) "earth" else "moon") else "deep space";
+    const soi_body = world.planets[soi_idx orelse 0];
+    const altitude = ship.pos.sub(soi_body.pos).len() - soi_body.radius;
 
     rl.drawFPS(10, 10);
 
-    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}   altitude: {d:.0}   theme: {s}", .{ speed, altitude, theme.label() }) catch "";
+    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}   altitude: {d:.0}   soi: {s}   theme: {s}", .{ speed, altitude, soi_name, theme.label() }) catch "";
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
     const controls = if (is_web)
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   R: reset   T: theme"
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   O: SOI   R: reset   T: theme"
     else
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   R: reset   T: theme   F: fullscreen";
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   O: SOI   R: reset   T: theme   F: fullscreen";
     rl.drawText(
         controls,
         10,

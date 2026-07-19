@@ -37,25 +37,36 @@ Optional extras (same names across themes when present): `ship_thrust_0.png`,
 
 ## Asset list and sizes
 
-World units map 1:1 to pixels at zoom 1.0. Sizes below are the *content* size;
-the canvas may be a few px larger, but keep the sprite centered on the canvas —
-the game positions and rotates everything around the image center.
+World units map 1:1 to pixels at zoom 1.0. Sizes below are the *canvas* size,
+and the canvas must be fully used — see the zero-padding rule under Technical
+rules. The game positions and rotates everything around the image center.
 
-| Asset | File | Content size | Notes |
+| Asset | File | Canvas size | Notes |
 |-------|------|-------------|-------|
-| Earth | `earth.png` | 140 px diameter | Matches in-game radius 70. Blue/white living planet. |
-| Moon | `moon.png` | 84 px diameter | Matches in-game radius 42. Grey, cratered, dead. |
-| Starship | `ship.png` | ~24 px long, ~16 px wide | The player. Nose **points right** (see orientation). |
-| ISS | `iss.png` | ~28 px wide, ~18 px tall | Small station orbiting Earth. Solar panels + modules, readable at this size. |
+| Earth | `earth.png` | 280 px diameter | Matches in-game radius 140. Blue/white living planet. |
+| Moon | `moon.png` | 168 px diameter | Matches in-game radius 84. Grey, cratered, dead. |
+| Starship | `ship.png` | ~40 px long, ~16 px tall | The player. Nose **points right** (see orientation). |
+| ISS | `iss.png` | ~44 px wide, ~20 px tall | Small station orbiting Earth. Solar panels + modules, readable at this size. |
 
-If a style needs more resolution to look good (see the scifi-60s theme), export
-at exactly **2×** these sizes and add the suffix `@2x` inside the file — no,
-keep file names unchanged; instead note the scale in `art/<theme>/SCALE.txt`
-containing a single number (`1` or `2`). Default is `1`; pixelart must be `1`.
+Ship and ISS sizes are approximate — trim the canvas to the actual drawing.
+Planet sizes are exact and non-negotiable (see zero padding below).
+
+Exports are at exactly these sizes for every theme; `art/<theme>/SCALE.txt`
+records the export multiple of this table and must contain `1`. (Pixelart is
+*drawn* at half size on a native pixel grid and exported nearest-neighbour
+doubled — see its theme doc — but the shipped PNG is still 1×.)
 
 ## Technical rules
 
 - **Format:** PNG, RGBA, transparent background. No JPEG, no baked backgrounds.
+- **Zero padding — this breaks the game if violated.** The opaque content must
+  touch all four canvas edges (alpha bounding box == full canvas). The game
+  stretches the whole texture across the sprite's world-space size, so any
+  transparent margin renders the object *smaller* than its physics size: a
+  padded planet shows a disc smaller than its collision/gravity radius, and
+  ships/stations shrink relative to everything else. For planets specifically:
+  the disc diameter, the canvas dimension, and the in-game collision diameter
+  are the same number. Trim before export, never pad "for safety".
 - **Orientation:** "forward" is **+X (right)**. The game computes heading with
   `Vec2.fromAngle` and rotates the sprite; a ship drawn pointing up will fly
   sideways. Planets/ISS have no forward but should look correct unrotated.
@@ -88,7 +99,8 @@ only the *rendering style* changes.
 2. Draft in `_wip/`, iterate freely.
 3. Export finals to `art/<theme>/` with the exact file names above.
 4. Self-check each export:
-   - transparent background, centered, correct content size,
+   - transparent background, correct canvas size,
+   - **zero padding: opaque pixels touch all four canvas edges,**
    - ship points right,
    - looks right on a `#0a0a14` background at 25% / 100% / 400%,
    - consistent light from upper left,

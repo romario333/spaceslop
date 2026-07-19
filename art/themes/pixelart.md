@@ -4,14 +4,20 @@ Crisp, low-resolution pixel art. Think Kenney space packs, *Starbound*
 miniatures, classic 16-bit shooters — but restrained and cohesive, not busy.
 
 Read `art/README.md` first — sizes, orientation, and file names are defined
-there. This theme exports at **1× exactly** (`SCALE.txt` = `1`). The game uses
-nearest-neighbor filtering, so every pixel you place is a pixel on screen.
+there. Draw at **half** the README canvas sizes on a native pixel grid
+(Earth 140 px diameter, moon 84, ship ~20×8, ISS ~22×10), then export
+**nearest-neighbour doubled** to the README sizes, so every art pixel becomes
+a crisp 2×2 block (`SCALE.txt` = `1` — the shipped PNG is full size). The game
+uses nearest-neighbor filtering, so the chunky-pixel look survives on screen.
 
 ## Hard rules
 
-- **Native resolution only.** Draw at the content sizes from the README
-  (Earth 140 px diameter, moon 84, ship ~24×16, ISS ~28×18). Never draw big
-  and downscale — that produces mush, not pixel art.
+- **Native resolution only.** Draw at the half-size grid above; the only
+  scaling ever applied is the final nearest-neighbour ×2 export. Never draw
+  big and downscale — that produces mush, not pixel art.
+- **Zero padding, disc fills the canvas.** Planet discs span the full canvas
+  edge-to-edge (the canvas *is* the collision circle); ship/ISS canvases are
+  trimmed to the drawing. See the README's zero-padding rule.
 - **No anti-aliasing against transparency.** Sprite edges are hard. Internal
   anti-aliasing (hand-placed intermediate colors) is fine and encouraged on
   large shapes like Earth.

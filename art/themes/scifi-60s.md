@@ -6,9 +6,11 @@ posters, Tintin *Explorers on the Moon*. Hand-drawn ink linework with flat
 retro color — a *drawing*, not a render.
 
 Read `art/README.md` first — sizes, orientation, and file names are defined
-there. This theme may export at **2×** the README content sizes so the linework
-stays clean under zoom (`SCALE.txt` = `2`): Earth 280 px diameter, moon 168,
-ship ~48×32, ISS ~56×36. Background still fully transparent PNG.
+there. This theme exports at exactly the README canvas sizes (`SCALE.txt` =
+`1`): Earth 280 px diameter, moon 168, ship ~40×16, ISS ~52×16. That is
+plenty of resolution for clean linework under zoom. Background still fully
+transparent PNG, zero padding — planet discs touch the canvas edges (the
+canvas is the collision circle), ship/ISS trimmed to the drawing.
 
 ## Style rules
 
