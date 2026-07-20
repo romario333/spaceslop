@@ -1,5 +1,5 @@
 //! Drawing layer: themes, sprite sets, the ship trail, and the screen-space
-//! HUD. Everything raylib-visual that isn't the debug panel lives here.
+//! HUD. Everything raylib-visual that isn't the detail panel lives here.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -187,9 +187,9 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
     const controls = if (is_web)
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: debug + follow it"
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: details + follow it"
     else
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: debug + follow it";
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: details + follow it";
     rl.drawText(
         controls,
         10,
