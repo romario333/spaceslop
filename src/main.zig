@@ -137,6 +137,7 @@ fn run() !void {
         if (rl.isKeyDown(.a) or rl.isKeyDown(.left)) input.turn -= 1;
         if (rl.isKeyDown(.d) or rl.isKeyDown(.right)) input.turn += 1;
         input.thrust = rl.isKeyDown(.w) or rl.isKeyDown(.up);
+        input.brake = rl.isKeyDown(.s) or rl.isKeyDown(.down);
         if (rl.isKeyPressed(.r)) {
             world.ship = initial_ship;
             trail.clear();

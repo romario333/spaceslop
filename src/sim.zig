@@ -68,6 +68,9 @@ pub const Ship = struct {
     /// Facing direction in radians; thrust pushes along this heading.
     angle: f32 = 0,
     thrusting: bool = false,
+    /// Retro thrusters firing: the pair of small nose thrusters that push
+    /// the ship backwards along its heading.
+    braking: bool = false,
 };
 
 /// Per-frame control input, produced by the renderer/input layer.
@@ -75,6 +78,9 @@ pub const Input = struct {
     /// -1 = turn left, +1 = turn right, 0 = hold heading.
     turn: f32 = 0,
     thrust: bool = false,
+    /// Retro burn — same magnitude as `thrust`, opposite direction. Holding
+    /// both at once simply cancels out.
+    brake: bool = false,
 };
 
 pub const World = struct {
@@ -148,8 +154,13 @@ pub const World = struct {
             }
         }
         self.ship.thrusting = input.thrust;
+        self.ship.braking = input.brake;
         if (input.thrust) {
             acc = acc.add(Vec2.fromAngle(self.ship.angle).scale(thrust_accel));
+        }
+        // Two small nose thrusters, same total power as the main engine.
+        if (input.brake) {
+            acc = acc.add(Vec2.fromAngle(self.ship.angle).scale(-thrust_accel));
         }
 
         self.ship.vel = self.ship.vel.add(acc.scale(dt)); // velocity first...
@@ -268,4 +279,18 @@ test "thrust along heading increases speed" {
     world.step(0.1, .{ .thrust = true });
     try testing.expect(world.ship.vel.x > 0); // pushed along +x heading
     try testing.expectApproxEqAbs(@as(f32, 0), world.ship.vel.y, 1e-4);
+}
+
+test "brake pushes opposite the heading with the same power" {
+    var fwd: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{}, .angle = 0 } };
+    var back: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{}, .angle = 0 } };
+    fwd.step(0.1, .{ .thrust = true });
+    back.step(0.1, .{ .brake = true });
+    try testing.expectApproxEqRel(-fwd.ship.vel.x, back.ship.vel.x, 1e-6);
+    try testing.expect(back.ship.braking);
+
+    // Holding both cancels out exactly.
+    var both: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{}, .angle = 0 } };
+    both.step(0.1, .{ .thrust = true, .brake = true });
+    try testing.expectEqual(@as(f32, 0), both.ship.vel.len());
 }

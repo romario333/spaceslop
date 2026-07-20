@@ -136,9 +136,20 @@ pub fn drawShip(ship: sim.Ship, sprites: ?*const SpriteSet) void {
 
     // Exhaust flame behind the ship while thrusting. The flame belongs to the
     // engine, not the sprites (see art/README.md), so it's drawn for every theme.
+    const fwd = Vec2.fromAngle(ship.angle);
     if (ship.thrusting) {
-        const back = ship.pos.sub(Vec2.fromAngle(ship.angle).scale(30.0));
+        const back = ship.pos.sub(fwd.scale(30.0));
         rl.drawCircleV(v(back), 9.0, .{ .r = 255, .g = 170, .b = 40, .a = 255 });
+    }
+
+    // Retro burn: two small thrusters either side of the nose, firing forward.
+    if (ship.braking) {
+        const side: Vec2 = .{ .x = -fwd.y, .y = fwd.x };
+        const nose = ship.pos.add(fwd.scale(24.0));
+        for ([_]f32{ -1, 1 }) |s| {
+            const jet = nose.add(side.scale(s * 7.0));
+            rl.drawCircleV(v(jet), 5.0, .{ .r = 120, .g = 200, .b = 255, .a = 255 });
+        }
     }
 
     if (sprites) |s| {
@@ -187,9 +198,9 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
     const controls = if (is_web)
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: details + follow it"
+        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: details + follow it"
     else
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: details + follow it";
+        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: details + follow it";
     rl.drawText(
         controls,
         10,
