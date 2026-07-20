@@ -115,6 +115,74 @@ pub fn spriteScale(s: *const SpriteSet, tex: rl.Texture2D, radius: f32) f32 {
     return radius * 2.0 / (@as(f32, @floatFromInt(tex.width)) * s.px_scale);
 }
 
+/// Repeating starfield. A single static field spanning the whole solar system
+/// (~50k px across) would need tens of thousands of stars, so instead one tile
+/// is generated with a fixed seed and stamped across the view: every copy that
+/// intersects the camera is drawn.
+///
+/// The tile's *world* size doubles as you zoom out, so the number of copies on
+/// screen — and hence the stars drawn per frame — stays bounded at every zoom
+/// level. Without that, the fully zoomed-out view (zoom 0.02, ~50k px across)
+/// stamps ~9x9 tiles, i.e. >100k stars per frame, and the frame rate collapses.
+pub const Starfield = struct {
+    const count = 1500;
+    /// World size of one tile at zoom 1.
+    const base_tile: f32 = 7000.0;
+
+    points: [count]rl.Vector2 = undefined,
+
+    pub fn init(seed: u64) Starfield {
+        var self: Starfield = .{};
+        var prng = std.Random.DefaultPrng.init(seed);
+        const rng = prng.random();
+        for (&self.points) |*s| {
+            s.* = .{
+                .x = rng.float(f32) * base_tile - base_tile / 2.0,
+                .y = rng.float(f32) * base_tile - base_tile / 2.0,
+            };
+        }
+        return self;
+    }
+
+    pub fn draw(self: *const Starfield, cam: rl.Camera2D) void {
+        const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+        const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+
+        // Grow the tile in powers of two until one copy covers the view; that
+        // caps the stamp grid at 2x2 (plus edges) whatever the zoom. Powers of
+        // two keep the choice stable, so the field only reshuffles on the rare
+        // frame that crosses a doubling.
+        var tile = base_tile;
+        while (tile < @max(view_w, view_h)) tile *= 2.0;
+        const spread = tile / base_tile; // stretch tile-local coords to match
+        const half = tile / 2.0;
+
+        // Stars are points, not world-scale objects: size them in screen px so
+        // they stay visible zoomed out. Rectangles, not circles — at 1-2 px the
+        // shapes are indistinguishable and a rect is two triangles, not 36.
+        const px = 1.5 / cam.zoom;
+        const color: rl.Color = .{ .r = 170, .g = 170, .b = 200, .a = 255 };
+
+        const tx0: i32 = @intFromFloat(@ceil((cam.target.x - view_w / 2.0 - half) / tile));
+        const tx1: i32 = @intFromFloat(@floor((cam.target.x + view_w / 2.0 + half) / tile));
+        const ty0: i32 = @intFromFloat(@ceil((cam.target.y - view_h / 2.0 - half) / tile));
+        const ty1: i32 = @intFromFloat(@floor((cam.target.y + view_h / 2.0 + half) / tile));
+        var ty = ty0;
+        while (ty <= ty1) : (ty += 1) {
+            var tx = tx0;
+            while (tx <= tx1) : (tx += 1) {
+                const ox = @as(f32, @floatFromInt(tx)) * tile;
+                const oy = @as(f32, @floatFromInt(ty)) * tile;
+                for (self.points) |s| rl.drawRectangleV(
+                    .{ .x = s.x * spread + ox - px / 2.0, .y = s.y * spread + oy - px / 2.0 },
+                    .{ .x = px, .y = px },
+                    color,
+                );
+            }
+        }
+    }
+};
+
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
 pub const Trail = struct {
     const cap = 4000;
