@@ -38,7 +38,8 @@ cd zig-out/web && python3 -m http.server 8000
 |-----|--------|
 | `W` / `↑` | thrust along heading |
 | `A` `D` / `←` `→` | rotate |
-| mouse wheel | zoom |
+| scroll / two-finger swipe | pan the view |
+| `⌘` + scroll | zoom |
 | `R` | reset ship |
 | `T` | cycle visual theme (pixelart → scifi-60s → classic) |
 | `O` | toggle sphere-of-influence rings |

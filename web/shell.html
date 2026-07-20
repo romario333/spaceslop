@@ -31,7 +31,7 @@
       setStatus: (t) => { statusEl.textContent = t; },
       onRuntimeInitialized: () => {
         canvas.focus(); // so keyboard input reaches the game
-        statusEl.textContent = 'W/↑ thrust · A/D or ←/→ turn · wheel zoom · R reset';
+        statusEl.textContent = 'W/↑ thrust · A/D or ←/→ turn · scroll pan · ⌘+scroll zoom · R reset';
       },
     };
     canvas.addEventListener('click', () => canvas.focus());
