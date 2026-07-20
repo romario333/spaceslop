@@ -50,6 +50,9 @@ pub fn build(b: *std.Build) !void {
         // load failed with a corrupt-PNG error on the web build. Native has an
         // 8 MB stack, which is why this only ever showed up in the browser.
         emcc_settings.put("STACK_SIZE", "4194304") catch unreachable;
+        // Keep the debug-bridge dispatcher callable from the page via
+        // Module.ccall (see src/debug.zig and web/shell.html).
+        try emcc_settings.put("EXPORTED_FUNCTIONS", "_main,_space_slop_debug");
 
         const emcc_step = emsdk.emccStep(b, raylib_artifact, wasm, .{
             .optimize = optimize,

@@ -143,8 +143,11 @@ pub const DetailPanel = struct {
         };
     }
 
+    /// Mouse state comes in from the input seam (input.zig) rather than
+    /// straight from raylib, so latched click edges and debug-injected clicks
+    /// hit the same paths.
     pub fn handleMouse(self: *DetailPanel, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2, mouse: input.Mouse) void {
-        const m = rl.getMousePosition();
+        const m = mouse.pos;
         if (mouse.released) self.dragging = null;
 
         if (self.selected) |idx| {
