@@ -3,6 +3,10 @@ moon.png — regenerated native-detail 336 px Moon, transparent, upper-left ligh
 ship.png — regenerated native-detail 128×80 canvas, right-facing, transparent, no baked thrust.
 iss.png — regenerated native-detail 128×80 canvas, centered horizontal station, transparent.
 palette.png — 16-color shared theme palette.
+mars.png — native-detail 560 px rusty cratered Mars, transparent, upper-left lighting.
+venus.png — native-detail 560 px cloud-covered Venus, transparent, upper-left lighting.
+mercury.png — native-detail 560 px cratered Mercury, transparent, upper-left lighting.
+sun.png — native-detail 560 px textured solar disc, transparent, upper-left lighting.
 
 Note: this is a genuinely regenerated pack, not an upscaled version of the
 earlier sprites. It is drawn at 2× world size (`SCALE.txt` = `2`, overriding the
