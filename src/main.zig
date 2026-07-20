@@ -8,6 +8,7 @@ const rl = @import("raylib");
 const sim = @import("sim.zig");
 const Vec2 = sim.Vec2;
 const cfg = @import("config.zig");
+const input_shim = @import("input.zig");
 const render = @import("render.zig");
 const Theme = render.Theme;
 const SpriteSet = render.SpriteSet;
@@ -33,6 +34,9 @@ fn run() !void {
     rl.setConfigFlags(.{ .vsync_hint = true, .window_resizable = true, .msaa_4x_hint = true });
     rl.initWindow(screen_w, screen_h, "space-slop");
     defer rl.closeWindow();
+    // Catch clicks shorter than a frame (trackpad taps) that raylib's own
+    // per-frame polling loses; see input.zig.
+    input_shim.init();
 
     // Native builds start fullscreen at the monitor's native resolution.
     if (!is_web) {
@@ -172,7 +176,7 @@ fn run() !void {
 
         // Planet picking + slider drags. Runs before the physics steps so an
         // edit shows up on this very frame.
-        detail.handleMouse(&planets, cam, &pan_offset);
+        detail.handleMouse(&planets, cam, &pan_offset, input_shim.poll());
         detail.save_flash = @max(0, detail.save_flash - rl.getFrameTime());
         if (detail.save_requested) {
             detail.save_requested = false;

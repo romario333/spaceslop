@@ -12,6 +12,7 @@ const rl = @import("raylib");
 const sim = @import("sim.zig");
 const Vec2 = sim.Vec2;
 const config = @import("config.zig");
+const input = @import("input.zig");
 const v = @import("render.zig").v;
 
 const is_web = builtin.target.os.tag == .emscripten;
@@ -114,12 +115,12 @@ pub const DetailPanel = struct {
         };
     }
 
-    pub fn handleMouse(self: *DetailPanel, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2) void {
+    pub fn handleMouse(self: *DetailPanel, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2, mouse: input.Mouse) void {
         const m = rl.getMousePosition();
-        if (rl.isMouseButtonReleased(.left)) self.dragging = null;
+        if (mouse.released) self.dragging = null;
 
         if (self.selected) |idx| {
-            if (rl.isMouseButtonPressed(.left)) {
+            if (mouse.pressed) {
                 if (rl.checkCollisionPointRec(m, closeRect())) {
                     self.selected = null;
                     pan_offset.* = .{};
@@ -145,16 +146,20 @@ pub const DetailPanel = struct {
                 const t = trackRect(i);
                 const frac = std.math.clamp((m.x - t.x) / t.width, 0, 1);
                 fieldPtr(&planets[idx], i).* = fields[i].min + frac * (fields[i].max - fields[i].min);
+                // A tap delivers press and release in the same frame; the
+                // release at the top of this function predates the press, so
+                // end the one-frame drag here or it would stick to the mouse.
+                if (mouse.released) self.dragging = null;
                 return;
             }
             // A click anywhere on the panel is the panel's, never the world's.
-            if (rl.isMouseButtonPressed(.left) and rl.checkCollisionPointRec(m, panelRect())) return;
+            if (mouse.pressed and rl.checkCollisionPointRec(m, panelRect())) return;
         }
 
         // A click in the world selects the planet under it, which also makes
         // it the camera's frame of reference; clicking it again, or empty
         // space, deselects and returns the view to the ship.
-        if (rl.isMouseButtonPressed(.left)) {
+        if (mouse.pressed) {
             const wp = rl.getScreenToWorld2D(m, cam);
             const world_m: Vec2 = .{ .x = wp.x, .y = wp.y };
             const was = self.selected;
