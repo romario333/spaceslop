@@ -29,6 +29,8 @@ pub const DetailPanel = struct {
     const track_h: f32 = 6;
     const knob_r: f32 = 7;
     const btn_h: f32 = 28;
+    /// Gap between the selected body's edge and the panel.
+    const gap: f32 = 16;
 
     const Field = struct { name: [:0]const u8, min: f32, max: f32 };
     /// `size` is Planet.radius: it drives both the drawn sprite size and the
@@ -46,6 +48,10 @@ pub const DetailPanel = struct {
     pub const max_pan: f32 = 3500;
 
     selected: ?usize = null,
+    /// Top-left of the panel in screen space, recomputed each frame from the
+    /// selected body's position (see `place`). Hit testing and drawing both
+    /// read it, so they always agree on where the panel is.
+    origin: rl.Vector2 = .{ .x = 0, .y = 0 },
     /// Which slider owns the mouse right now, so a drag keeps control even
     /// once the cursor wanders off the (thin) track.
     dragging: ?usize = null,
@@ -63,39 +69,61 @@ pub const DetailPanel = struct {
         return sect_h + fields.len * row_h + btn;
     }
 
-    /// Y of the debug section's content, i.e. just below its title strip.
-    fn debugTop() f32 {
-        return panelRect().y + head_h + sect_h;
+    fn panelH() f32 {
+        return head_h + debugH() + pad;
     }
 
-    fn panelRect() rl.Rectangle {
-        const h = head_h + debugH() + pad;
+    /// Y of the debug section's content, i.e. just below its title strip.
+    fn debugTop(self: DetailPanel) f32 {
+        return self.origin.y + head_h + sect_h;
+    }
+
+    fn panelRect(self: DetailPanel) rl.Rectangle {
+        return .{ .x = self.origin.x, .y = self.origin.y, .width = w, .height = panelH() };
+    }
+
+    fn closeRect(self: DetailPanel) rl.Rectangle {
+        return .{ .x = self.origin.x + w - 28, .y = self.origin.y + 6, .width = 22, .height = 22 };
+    }
+
+    fn trackRect(self: DetailPanel, i: usize) rl.Rectangle {
+        const row_y = self.debugTop() + @as(f32, @floatFromInt(i)) * row_h;
+        return .{ .x = self.origin.x + pad, .y = row_y + 24, .width = w - 2 * pad, .height = track_h };
+    }
+
+    fn saveRect(self: DetailPanel) rl.Rectangle {
         return .{
-            .x = @as(f32, @floatFromInt(rl.getScreenWidth())) - w - pad,
-            .y = pad,
-            .width = w,
-            .height = h,
+            .x = self.origin.x + pad,
+            .y = self.debugTop() + fields.len * row_h + 4,
+            .width = w - 2 * pad,
+            .height = btn_h,
         };
     }
 
-    fn closeRect() rl.Rectangle {
-        const r = panelRect();
-        return .{ .x = r.x + w - 28, .y = r.y + 6, .width = 22, .height = 22 };
-    }
+    /// Park the panel to the right of the selected body, flipping to its left
+    /// when that would hang off the right edge and clamping to the viewport so
+    /// a body bigger than the screen — or drifted off it — still leaves the
+    /// whole panel visible. Call once per frame, after the camera is final.
+    pub fn place(self: *DetailPanel, planets: []const sim.Planet, cam: rl.Camera2D) void {
+        const idx = self.selected orelse return;
+        // Holding the panel still during a drag keeps the `size` slider from
+        // sliding out from under the cursor as the body grows.
+        if (self.dragging != null) return;
+        const p = planets[idx];
+        const c = rl.getWorldToScreen2D(v(p.pos), cam);
+        const edge = p.radius * cam.zoom + gap;
+        const h = panelH();
+        const sw: f32 = @floatFromInt(rl.getScreenWidth());
+        const sh: f32 = @floatFromInt(rl.getScreenHeight());
 
-    fn trackRect(i: usize) rl.Rectangle {
-        const r = panelRect();
-        const row_y = debugTop() + @as(f32, @floatFromInt(i)) * row_h;
-        return .{ .x = r.x + pad, .y = row_y + 24, .width = w - 2 * pad, .height = track_h };
-    }
-
-    fn saveRect() rl.Rectangle {
-        const r = panelRect();
-        return .{
-            .x = r.x + pad,
-            .y = debugTop() + fields.len * row_h + 4,
-            .width = w - 2 * pad,
-            .height = btn_h,
+        var x = c.x + edge;
+        if (x + w + pad > sw) {
+            const left = c.x - edge - w;
+            x = if (left >= pad) left else sw - w - pad;
+        }
+        self.origin = .{
+            .x = std.math.clamp(x, pad, @max(pad, sw - w - pad)),
+            .y = std.math.clamp(c.y - h / 2.0, pad, @max(pad, sh - h - pad)),
         };
     }
 
@@ -121,17 +149,17 @@ pub const DetailPanel = struct {
 
         if (self.selected) |idx| {
             if (mouse.pressed) {
-                if (rl.checkCollisionPointRec(m, closeRect())) {
+                if (rl.checkCollisionPointRec(m, self.closeRect())) {
                     self.selected = null;
                     pan_offset.* = .{};
                     return;
                 }
-                if (!is_web and rl.checkCollisionPointRec(m, saveRect())) {
+                if (!is_web and rl.checkCollisionPointRec(m, self.saveRect())) {
                     self.save_requested = true;
                     return;
                 }
                 for (fields, 0..) |_, i| {
-                    const t = trackRect(i);
+                    const t = self.trackRect(i);
                     // Generous hit box so the 6 px track is easy to grab.
                     const hit: rl.Rectangle = .{
                         .x = t.x - knob_r,
@@ -143,7 +171,7 @@ pub const DetailPanel = struct {
                 }
             }
             if (self.dragging) |i| {
-                const t = trackRect(i);
+                const t = self.trackRect(i);
                 const frac = std.math.clamp((m.x - t.x) / t.width, 0, 1);
                 fieldPtr(&planets[idx], i).* = fields[i].min + frac * (fields[i].max - fields[i].min);
                 // A tap delivers press and release in the same frame; the
@@ -153,7 +181,7 @@ pub const DetailPanel = struct {
                 return;
             }
             // A click anywhere on the panel is the panel's, never the world's.
-            if (mouse.pressed and rl.checkCollisionPointRec(m, panelRect())) return;
+            if (mouse.pressed and rl.checkCollisionPointRec(m, self.panelRect())) return;
         }
 
         // A click in the world selects the planet under it, which also makes
@@ -193,7 +221,7 @@ pub const DetailPanel = struct {
     /// The panel itself. Drawn in screen space, after the world.
     pub fn draw(self: DetailPanel, planets: []const sim.Planet) void {
         const idx = self.selected orelse return;
-        const r = panelRect();
+        const r = self.panelRect();
 
         rl.drawRectangleRec(r, .{ .r = 12, .g = 16, .b = 30, .a = 230 });
         rl.drawRectangleLinesEx(r, 1, .{ .r = 90, .g = 110, .b = 150, .a = 255 });
@@ -201,15 +229,15 @@ pub const DetailPanel = struct {
         const name: [:0]const u8 = if (idx == 0) "earth" else "moon";
         rl.drawText(name, @intFromFloat(r.x + pad), @intFromFloat(r.y + 8), 18, .{ .r = 255, .g = 210, .b = 90, .a = 255 });
 
-        const close = closeRect();
+        const close = self.closeRect();
         rl.drawText("x", @intFromFloat(close.x + 7), @intFromFloat(close.y + 2), 18, .{ .r = 180, .g = 195, .b = 220, .a = 255 });
 
         self.drawDebugSection(planets[idx]);
     }
 
     /// Title strip for a section: its name and a rule across the panel.
-    fn drawSectionTitle(name: [:0]const u8, top: f32) void {
-        const r = panelRect();
+    fn drawSectionTitle(self: DetailPanel, name: [:0]const u8, top: f32) void {
+        const r = self.panelRect();
         rl.drawText(name, @intFromFloat(r.x + pad), @intFromFloat(top + 4), 14, .{ .r = 130, .g = 150, .b = 185, .a = 255 });
         const line_y = top + sect_h - 6;
         rl.drawLineV(
@@ -221,10 +249,10 @@ pub const DetailPanel = struct {
 
     /// Live tuning sliders plus (on desktop) the save-to-config button.
     fn drawDebugSection(self: DetailPanel, p: sim.Planet) void {
-        drawSectionTitle("debug", panelRect().y + head_h);
+        self.drawSectionTitle("debug", self.origin.y + head_h);
 
         for (fields, 0..) |f, i| {
-            const t = trackRect(i);
+            const t = self.trackRect(i);
             const val = fieldVal(p, i);
             const frac = std.math.clamp((val - f.min) / (f.max - f.min), 0, 1);
             const fill = t.width * frac;
@@ -245,7 +273,7 @@ pub const DetailPanel = struct {
         }
 
         if (!is_web) {
-            const b = saveRect();
+            const b = self.saveRect();
             const flashing = self.save_flash > 0;
             const border: rl.Color = if (!flashing)
                 .{ .r = 90, .g = 110, .b = 150, .a = 255 }

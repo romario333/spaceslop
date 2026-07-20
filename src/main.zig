@@ -214,6 +214,8 @@ fn run() !void {
         // ship. Scrolling pans the view around whichever body is followed.
         const follow_pos = if (detail.selected) |idx| planets[idx].pos else world.ship.pos;
         cam.target = v(follow_pos.add(pan_offset));
+        // Panel position tracks the selected body, so it needs the final camera.
+        detail.place(&planets, cam);
 
         // --- Draw ----------------------------------------------------------
         rl.beginDrawing();
