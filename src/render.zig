@@ -267,6 +267,98 @@ pub fn drawIssClassic(pos: Vec2, rotation_deg: f32) void {
     rl.drawCircleV(v(pos), 6.0, .{ .r = 230, .g = 232, .b = 240, .a = 255 });
 }
 
+/// Screen-edge pointers to off-screen bodies: one small arrow per side of the
+/// screen, aimed at the nearest off-screen body on that side. Zoomed in on one
+/// planet the rest of the system is invisible, and these say which way it is.
+/// Inset of the arrow band from each screen edge. Top and bottom clear the
+/// HUD's two text lines so an arrow never lands on top of them.
+const edge_inset_x: f32 = 22.0;
+const edge_inset_top: f32 = 74.0;
+const edge_inset_bottom: f32 = 44.0;
+const edge_arrow_size: f32 = 9.0;
+const edge_label_size: i32 = 14;
+
+/// Arrow tint per body — canonical body order (cfg.names), matching each
+/// body's own colour so the name and the marker reinforce each other.
+const edge_colors = [_]rl.Color{
+    .{ .r = 255, .g = 210, .b = 110, .a = 220 }, // sun
+    .{ .r = 180, .g = 175, .b = 170, .a = 220 }, // mercury
+    .{ .r = 230, .g = 195, .b = 140, .a = 220 }, // venus
+    .{ .r = 110, .g = 175, .b = 255, .a = 220 }, // earth
+    .{ .r = 215, .g = 215, .b = 225, .a = 220 }, // moon
+    .{ .r = 235, .g = 120, .b = 90, .a = 220 }, // mars
+};
+
+pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
+    const sw: f32 = @floatFromInt(rl.getScreenWidth());
+    const sh: f32 = @floatFromInt(rl.getScreenHeight());
+    // The band the arrows sit on, and the box a body must leave to get one.
+    const left = edge_inset_x;
+    const right = sw - edge_inset_x;
+    const top = edge_inset_top;
+    const bottom = sh - edge_inset_bottom;
+    const cx = sw / 2.0;
+    const cy = sh / 2.0;
+    if (right <= cx or left >= cx or bottom <= cy or top >= cy) return; // tiny window
+
+    // Nearest off-screen body per direction: +x, -x, +y, -y.
+    const Candidate = struct { dist: f32, dx: f32, dy: f32, idx: usize };
+    var best = [_]?Candidate{null} ** 4;
+
+    for (planets, 0..) |p, i| {
+        const sp = rl.getWorldToScreen2D(v(p.pos), cam);
+        // A body with any part of its disc inside the box needs no arrow.
+        const r = p.radius * cam.zoom;
+        if (sp.x + r > left and sp.x - r < right and sp.y + r > top and sp.y - r < bottom) continue;
+        const dx = sp.x - cx;
+        const dy = sp.y - cy;
+        const dist = @sqrt(dx * dx + dy * dy);
+        if (dist <= 0.0001) continue;
+        const slot: usize = if (@abs(dx) > @abs(dy))
+            (if (dx > 0) 0 else 1)
+        else
+            (if (dy > 0) 2 else 3);
+        if (best[slot] == null or dist < best[slot].?.dist) {
+            best[slot] = .{ .dist = dist, .dx = dx, .dy = dy, .idx = i };
+        }
+    }
+
+    for (best) |maybe| {
+        const b = maybe orelse continue;
+        // Where the ray from the screen centre leaves the box. One of the two
+        // ratios may be infinite (a purely axis-aligned direction); @min
+        // discards it.
+        const tx = (if (b.dx > 0) right - cx else left - cx) / b.dx;
+        const ty = (if (b.dy > 0) bottom - cy else top - cy) / b.dy;
+        const t = @min(tx, ty);
+        const pos: Vec2 = .{ .x = cx + b.dx * t, .y = cy + b.dy * t };
+        const deg = std.math.atan2(b.dy, b.dx) * 180.0 / std.math.pi;
+        rl.drawPoly(v(pos), 3, edge_arrow_size, deg, edge_colors[b.idx]);
+        rl.drawPolyLines(v(pos), 3, edge_arrow_size, deg, .{ .r = 20, .g = 25, .b = 40, .a = 180 });
+
+        // Name, just inside the arrow (the arrow points outward, so the label
+        // goes the other way) and clamped to stay fully on screen.
+        const label = cfg.names[b.idx];
+        const lw: f32 = @floatFromInt(rl.measureText(label, edge_label_size));
+        const lh: f32 = @floatFromInt(edge_label_size);
+        // Step back by the arrow plus half the label's own extent along the
+        // pointing direction, so text and arrow never overlap on any edge.
+        const ux = b.dx / b.dist;
+        const uy = b.dy / b.dist;
+        const gap = edge_arrow_size + 6.0 + (lw / 2.0) * @abs(ux) + (lh / 2.0) * @abs(uy);
+        const anchor_x = pos.x - ux * gap - lw / 2.0;
+        const anchor_y = pos.y - uy * gap - lh / 2.0;
+        const lx = std.math.clamp(anchor_x, 4.0, @max(4.0, sw - lw - 4.0));
+        const ly = std.math.clamp(anchor_y, 4.0, @max(4.0, sh - lh - 4.0));
+        var tint = edge_colors[b.idx];
+        tint.a = 220;
+        // Dark drop shadow: a tint like Mars' rust would otherwise vanish
+        // against a bright sprite the label happens to land on.
+        rl.drawText(label, @as(i32, @intFromFloat(lx)) + 1, @as(i32, @intFromFloat(ly)) + 1, edge_label_size, .{ .r = 10, .g = 12, .b = 20, .a = 200 });
+        rl.drawText(label, @intFromFloat(lx), @intFromFloat(ly), edge_label_size, tint);
+    }
+}
+
 var hud_buf: [192]u8 = undefined;
 
 pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
