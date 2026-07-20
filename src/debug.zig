@@ -269,7 +269,7 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
     try writeVec(w, ship.pos);
     try w.writeAll(",\"vel\":");
     try writeVec(w, ship.vel);
-    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"thrusting\":{}}}", .{ ship.vel.len(), ship.angle, ship.thrusting });
+    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"thrusting\":{},\"braking\":{}}}", .{ ship.vel.len(), ship.angle, ship.thrusting, ship.braking });
 
     const soi_idx = h.world.dominantIndex(ship.pos);
     if (soi_idx) |i| {

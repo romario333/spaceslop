@@ -34,15 +34,43 @@ pub fn main(init: std.process.Init.Minimal) void {
 }
 
 fn run(init: std.process.Init.Minimal) !void {
-    rl.setConfigFlags(.{ .vsync_hint = true, .window_resizable = true, .msaa_4x_hint = true });
+    // Debug mode (`--debug [port]`) is decided before the window opens: a
+    // debug-driven instance is a background tool, so it must not take over
+    // the screen or steal keyboard focus from whatever the user is doing.
+    var debug_port: ?u16 = null;
+    if (!is_web) {
+        var args = std.process.Args.Iterator.init(init.args);
+        _ = args.next(); // program name
+        var requested = false;
+        var port: u16 = 4444;
+        while (args.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--debug")) {
+                requested = true;
+            } else if (requested) {
+                port = std.fmt.parseInt(u16, arg, 10) catch port;
+            }
+        }
+        if (requested) debug_port = port;
+    }
+
+    rl.setConfigFlags(.{
+        .vsync_hint = true,
+        .window_resizable = true,
+        .msaa_4x_hint = true,
+        // Debug instances open without key focus and keep simulating while
+        // minimized, so the bridge stays responsive in the background.
+        .window_unfocused = debug_port != null,
+        .window_always_run = debug_port != null,
+    });
     rl.initWindow(screen_w, screen_h, "space-slop");
     defer rl.closeWindow();
     // Catch clicks shorter than a frame (trackpad taps) that raylib's own
     // per-frame polling loses; see input.zig.
     input.init();
 
-    // Native builds start fullscreen at the monitor's native resolution.
-    if (!is_web) {
+    // Native builds start fullscreen at the monitor's native resolution —
+    // except in debug mode, which stays a small window in the background.
+    if (!is_web and debug_port == null) {
         const monitor = rl.getCurrentMonitor();
         rl.setWindowSize(rl.getMonitorWidth(monitor), rl.getMonitorHeight(monitor));
         rl.toggleFullscreen();
@@ -145,20 +173,7 @@ fn run(init: std.process.Init.Minimal) !void {
         .pan_offset = &pan_offset,
         .theme = &theme,
     });
-    if (!is_web) {
-        var args = std.process.Args.Iterator.init(init.args);
-        _ = args.next(); // program name
-        var debug_requested = false;
-        var debug_port: u16 = 4444;
-        while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--debug")) {
-                debug_requested = true;
-            } else if (debug_requested) {
-                debug_port = std.fmt.parseInt(u16, arg, 10) catch debug_port;
-            }
-        }
-        if (debug_requested) dbg.serve(debug_port);
-    }
+    if (debug_port) |port| dbg.serve(port);
 
     // --- Fixed-timestep loop ----------------------------------------------
     const fixed_dt: f32 = 1.0 / 120.0;

@@ -63,6 +63,10 @@ zig build run -- --debug 5555     # ...or a custom port
 echo state | nc localhost 4444    # one-shot query
 ```
 
+A `--debug` instance is a background tool: instead of the usual fullscreen
+takeover it opens as a small unfocused window (keyboard focus stays wherever
+you are working) and keeps simulating while minimized.
+
 On the web build the same dispatcher is exported to the page; open the browser
 console and call `spaceSlopDebug('state')`.
 
