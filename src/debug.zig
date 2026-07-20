@@ -120,9 +120,22 @@ pub fn finishFrame() void {
         if (!shot_pending) return;
         shot_pending = false;
         shot_path[shot_len] = 0;
-        rl.takeScreenshot(shot_path[0..shot_len :0]);
+        const path = shot_path[0..shot_len :0];
         var w = std.Io.Writer.fixed(&rsp_buf);
-        w.print("ok {s}", .{shot_path[0..shot_len]}) catch {};
+        // Deliberately not rl.takeScreenshot: it prepends the working
+        // directory, so an absolute path turns into "<cwd>//tmp/shot.png"
+        // and fails. loadImageFromScreen + exportImage read the same
+        // framebuffer pixels but write to the path exactly as given.
+        if (rl.loadImageFromScreen()) |img| {
+            defer rl.unloadImage(img);
+            if (rl.exportImage(img, path)) {
+                w.print("ok {s}", .{path}) catch {};
+            } else {
+                w.print("err could not write {s}", .{path}) catch {};
+            }
+        } else |_| {
+            w.writeAll("err could not read the framebuffer") catch {};
+        }
         rsp_len = w.buffered().len;
         @atomicStore(Phase, &phase, .response, .release);
     }
