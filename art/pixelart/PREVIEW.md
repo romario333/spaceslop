@@ -4,5 +4,8 @@ ship.png — regenerated native-detail 128×80 canvas, right-facing, transparent
 iss.png — regenerated native-detail 128×80 canvas, centered horizontal station, transparent.
 palette.png — 16-color shared theme palette.
 
-Note: this is a genuinely regenerated 4× pack, not an upscaled version of the
-earlier sprites. The scale metadata intentionally overrides the theme default.
+Note: this is a genuinely regenerated pack, not an upscaled version of the
+earlier sprites. It is drawn at 2× world size (`SCALE.txt` = `2`, overriding the
+theme default of 1) and is smooth illustration rather than chunky pixels, so the
+game renders it with bilinear filtering. earth/moon were re-cropped to remove
+transparent margin so the disc fills the canvas per the zero-padding rule.

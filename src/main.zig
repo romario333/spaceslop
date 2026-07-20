@@ -43,10 +43,11 @@ const Theme = enum {
     }
 };
 
-/// One theme's sprites. `px_scale` is world pixels per texture pixel: both
-/// themes export at world size (see art/<theme>/SCALE.txt), zero-padding
-/// trimmed, so a planet texture spans exactly its physics diameter — Earth
-/// renders at its full 280 px world diameter and collisions line up.
+/// One theme's sprites. `px_scale` is world pixels per texture pixel, i.e.
+/// 1 / `art/<theme>/SCALE.txt`: scifi-60s exports at world size (scale 1),
+/// pixelart at 2× (scale 2 → 0.5 world px per texel). With that applied a
+/// planet texture spans exactly its physics diameter — Earth renders at its
+/// full 280 px world diameter and collisions line up.
 const SpriteSet = struct {
     earth: rl.Texture2D,
     moon: rl.Texture2D,
@@ -468,11 +469,12 @@ fn run() !void {
     }
 
     // --- Sprites & theme ---------------------------------------------------
-    // Pixelart samples nearest-neighbour so its (2x2 world px) pixels stay
-    // crisp; scifi-60s is smooth illustration, so it gets bilinear filtering.
+    // Both packs are smooth illustration rendered above world resolution
+    // (pixelart at 2×), so both get bilinear filtering — nearest-neighbour on
+    // a minified 2× texture just aliases.
     var theme: Theme = .scifi_60s;
     const sprite_sets = [_]SpriteSet{
-        try SpriteSet.load("pixelart", 1.0, .point),
+        try SpriteSet.load("pixelart", 0.5, .bilinear),
         try SpriteSet.load("scifi-60s", 1.0, .bilinear),
     };
     defer for (sprite_sets) |s| s.unload();
