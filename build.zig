@@ -44,7 +44,12 @@ pub fn build(b: *std.Build) !void {
 
         const install_dir: std.Build.InstallDir = .{ .custom = "web" };
         const emcc_flags = emsdk.emccDefaultFlags(b.allocator, .{ .optimize = optimize });
-        const emcc_settings = emsdk.emccDefaultSettings(b.allocator, .{ .optimize = optimize });
+        var emcc_settings = emsdk.emccDefaultSettings(b.allocator, .{ .optimize = optimize });
+        // Emscripten defaults to a 64 KB stack, which stb_image's PNG decoder
+        // (used by raylib's LoadImage) blows straight through — every texture
+        // load failed with a corrupt-PNG error on the web build. Native has an
+        // 8 MB stack, which is why this only ever showed up in the browser.
+        emcc_settings.put("STACK_SIZE", "4194304") catch unreachable;
 
         const emcc_step = emsdk.emccStep(b, raylib_artifact, wasm, .{
             .optimize = optimize,
