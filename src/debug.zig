@@ -3,8 +3,11 @@
 //! single-step the physics, capture screenshots. One dispatcher, two thin
 //! transports:
 //!
-//!  - native: run with `--debug [port]` and it listens on 127.0.0.1
-//!    (default port 4444), e.g. `echo state | nc localhost 4444`
+//!  - native: run with `--debug [port]` and it listens on 127.0.0.1, on the
+//!    first free port at or above the requested one (default 4444). The port
+//!    it settled on is written to `.debug-bridge-port` in cwd, so concurrent
+//!    instances from different worktrees never share one:
+//!    `echo state | nc localhost $(cat .debug-bridge-port)`
 //!  - web: the dispatcher is exported as `space_slop_debug` and wrapped by
 //!    `spaceSlopDebug('...')` in web/shell.html
 //!
@@ -78,8 +81,9 @@ pub fn init(h: Hooks) void {
     hooks = h;
 }
 
-/// Start the native TCP listener. No-op on the web build, where the page
-/// calls the exported dispatcher directly.
+/// Start the native TCP listener on the first free port at or above `port`.
+/// No-op on the web build, where the page calls the exported dispatcher
+/// directly.
 pub fn serve(port: u16) void {
     if (is_web) {
         return;
@@ -89,7 +93,6 @@ pub fn serve(port: u16) void {
             return;
         };
         t.detach();
-        rl.traceLog(.info, "debug: listening on 127.0.0.1:%d", .{@as(c_int, port)});
     }
 }
 
@@ -321,17 +324,42 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
 
 // --- Native TCP server thread -----------------------------------------------
 
-fn serverMain(port: u16) void {
+/// Where the bound port is published, relative to cwd. Several worktrees of
+/// this repo are often driven at once; each instance claims the first free
+/// port from the requested one upward and writes it here, so a driver reads
+/// the port of the instance it launched instead of guessing a shared one.
+const port_file = ".debug-bridge-port";
+/// How many ports to try before giving up.
+const port_scan = 16;
+
+fn serverMain(first_port: u16) void {
     var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
-    const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch unreachable;
-    var server = addr.listen(io, .{ .reuse_address = true }) catch |err| {
-        rl.traceLog(.warning, "debug: listen failed: %s", .{@errorName(err).ptr});
-        return;
-    };
+    var server: std.Io.net.Server = undefined;
+    var port = first_port;
+    const last_port = first_port +| (port_scan - 1);
+    while (true) : (port += 1) {
+        const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch unreachable;
+        // No `reuse_address`: it sets SO_REUSEPORT as well, which lets a
+        // second instance bind a port another one is already listening on —
+        // the two then split incoming connections at random.
+        server = addr.listen(io, .{}) catch |err| {
+            if (port < last_port) continue;
+            rl.traceLog(.warning, "debug: listen failed: %s", .{@errorName(err).ptr});
+            return;
+        };
+        break;
+    }
     defer server.deinit(io);
+
+    var buf: [8]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{d}\n", .{port}) catch unreachable;
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = port_file, .data = text }) catch |err| {
+        rl.traceLog(.warning, "debug: writing " ++ port_file ++ " failed: %s", .{@errorName(err).ptr});
+    };
+    rl.traceLog(.info, "debug: listening on 127.0.0.1:%d", .{@as(c_int, port)});
 
     while (true) {
         const stream = server.accept(io) catch |err| switch (err) {
