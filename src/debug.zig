@@ -18,6 +18,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const rl = @import("raylib");
 const sim = @import("sim.zig");
+const cfg = @import("config.zig");
 const input = @import("input.zig");
 const render = @import("render.zig");
 const DetailPanel = @import("detail_panel.zig").DetailPanel;
@@ -281,7 +282,7 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
     try w.writeAll(",\"planets\":[");
     for (h.planets, 0..) |p, i| {
         if (i > 0) try w.writeAll(",");
-        const name: []const u8 = if (i == 0) "earth" else "moon";
+        const name: []const u8 = cfg.names[i];
         try w.print("{{\"name\":\"{s}\",\"pos\":", .{name});
         try writeVec(w, p.pos);
         try w.writeAll(",\"vel\":");

@@ -20,12 +20,28 @@ pub const PlanetConfig = struct {
     core: f32 = 0,
 };
 
+/// Display name of each body, in the canonical body order used everywhere a
+/// body is looked up by index: the planets array in main.zig, Config.planet,
+/// and render.SpriteSet.body all follow it.
+pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars" };
+
 pub const Config = struct {
+    sun: PlanetConfig = .{ .mass = 100000, .radius = 600, .soi = 26000 },
+    mercury: PlanetConfig = .{ .mass = 2500, .radius = 50, .soi = 900, .core = 90 },
+    venus: PlanetConfig = .{ .mass = 7000, .radius = 130, .soi = 2000, .core = 145 },
     earth: PlanetConfig = .{ .mass = 8000, .radius = 140, .soi = 2500 },
-    moon: PlanetConfig = .{ .mass = 3000, .radius = 40, .soi = 400, .core = 110 },
+    moon: PlanetConfig = .{ .mass = 4000, .radius = 40, .soi = 770, .core = 110 },
+    mars: PlanetConfig = .{ .mass = 4000, .radius = 80, .soi = 1500, .core = 110 },
 
     pub fn planet(self: *Config, idx: usize) *PlanetConfig {
-        return if (idx == 0) &self.earth else &self.moon;
+        return switch (idx) {
+            0 => &self.sun,
+            1 => &self.mercury,
+            2 => &self.venus,
+            3 => &self.earth,
+            4 => &self.moon,
+            else => &self.mars,
+        };
     }
 
     pub fn load() Config {
@@ -51,7 +67,7 @@ pub const Config = struct {
 
     pub fn save(self: Config) !void {
         if (is_web) return;
-        var buf: [1024]u8 = undefined;
+        var buf: [2048]u8 = undefined;
         var w = std.Io.Writer.fixed(&buf);
         try std.zon.stringify.serialize(self, .{}, &w);
         try w.writeByte('\n');
