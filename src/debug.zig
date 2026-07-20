@@ -114,6 +114,10 @@ pub fn pump() void {
     }
 }
 
+/// rlgl's batch flush, not re-exported by raylib-zig's `rl` namespace; we link
+/// raylib itself, so the C symbol is right there.
+extern "c" fn rlDrawRenderBatchActive() void;
+
 /// Called by the main loop after the frame is drawn but before the buffer
 /// swap, which is where raylib's takeScreenshot reads consistent pixels.
 pub fn finishFrame() void {
@@ -124,6 +128,11 @@ pub fn finishFrame() void {
         shot_pending = false;
         shot_path[shot_len] = 0;
         const path = shot_path[0..shot_len :0];
+        // The capture reads the framebuffer, so anything still sitting in
+        // rlgl's batch (typically the topmost layer: HUD text, edge arrows)
+        // would be missing. endDrawing would flush it, but that also swaps —
+        // flush explicitly instead.
+        rlDrawRenderBatchActive();
         var w = std.Io.Writer.fixed(&rsp_buf);
         // Deliberately not rl.takeScreenshot: it prepends the working
         // directory, so an absolute path turns into "<cwd>//tmp/shot.png"

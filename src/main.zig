@@ -368,6 +368,7 @@ fn run(init: std.process.Init.Minimal) !void {
             rl.drawLineEx(v(world.ship.pos), v(vel_end), 2.0, .{ .r = 90, .g = 230, .b = 120, .a = 255 });
         }
 
+        render.drawEdgeArrows(&planets, cam);
         render.drawHud(world, theme, detail.selected);
         detail.draw(&planets);
 
