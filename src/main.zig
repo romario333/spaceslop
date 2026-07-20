@@ -180,21 +180,10 @@ fn run(init: std.process.Init.Minimal) !void {
     const iss_omega = iss_speed_scale * sim.World.circularOrbitSpeed(planets[earth_idx].mass, iss_orbit_r) / iss_orbit_r;
     var iss_angle: f32 = 0;
 
-    // Starfield tile, generated once with a fixed seed. A single static field
-    // spanning the whole solar system (~50k px across) would need tens of
-    // thousands of stars, so instead this one tile repeats: at draw time every
-    // copy that intersects the view is drawn, which keeps the on-screen star
-    // density constant wherever the ship travels.
-    const star_tile: f32 = 7000.0;
-    var stars: [1500]rl.Vector2 = undefined;
-    var prng = std.Random.DefaultPrng.init(0x5EED_1234);
-    const rng = prng.random();
-    for (&stars) |*s| {
-        s.* = .{
-            .x = rng.float(f32) * star_tile - star_tile / 2.0,
-            .y = rng.float(f32) * star_tile - star_tile / 2.0,
-        };
-    }
+    // Repeating starfield, generated once with a fixed seed (see render.zig):
+    // one tile is stamped across the view, keeping the on-screen star density
+    // constant wherever the ship travels and whatever the zoom.
+    const stars = render.Starfield.init(0x5EED_1234);
 
     var trail: Trail = .{};
     var show_soi = true;
@@ -332,30 +321,7 @@ fn run(init: std.process.Init.Minimal) !void {
             rl.beginMode2D(cam);
             defer rl.endMode2D();
 
-            // Draw every copy of the star tile that intersects the view (a
-            // copy at tile index k covers k*tile ± tile/2 around the origin).
-            {
-                const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
-                const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
-                const half = star_tile / 2.0;
-                const tx0: i32 = @intFromFloat(@ceil((cam.target.x - view_w / 2.0 - half) / star_tile));
-                const tx1: i32 = @intFromFloat(@floor((cam.target.x + view_w / 2.0 + half) / star_tile));
-                const ty0: i32 = @intFromFloat(@ceil((cam.target.y - view_h / 2.0 - half) / star_tile));
-                const ty1: i32 = @intFromFloat(@floor((cam.target.y + view_h / 2.0 + half) / star_tile));
-                var ty = ty0;
-                while (ty <= ty1) : (ty += 1) {
-                    var tx = tx0;
-                    while (tx <= tx1) : (tx += 1) {
-                        const ox = @as(f32, @floatFromInt(tx)) * star_tile;
-                        const oy = @as(f32, @floatFromInt(ty)) * star_tile;
-                        for (stars) |s| rl.drawCircleV(
-                            .{ .x = s.x + ox, .y = s.y + oy },
-                            1.0,
-                            .{ .r = 170, .g = 170, .b = 200, .a = 255 },
-                        );
-                    }
-                }
-            }
+            stars.draw(cam);
 
             trail.draw();
 
