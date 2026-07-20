@@ -1,6 +1,10 @@
-//! Click-a-planet debug panel: live-tweak the selected body's mass, sphere of
-//! influence and visual size. It writes straight into the `planets` array the
-//! simulation reads, so every change takes effect on the next physics step.
+//! Click-a-planet detail panel: everything about the selected body lives here.
+//! It is laid out as a stack of titled sections; today the only one is "debug"
+//! (live sliders for mass, sphere of influence and visual size), with room for
+//! object info and game actions below it later.
+//!
+//! The sliders write straight into the `planets` array the simulation reads, so
+//! every change takes effect on the next physics step.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -12,12 +16,14 @@ const v = @import("render.zig").v;
 
 const is_web = builtin.target.os.tag == .emscripten;
 
-var debug_buf: [64]u8 = undefined;
+var text_buf: [64]u8 = undefined;
 
-pub const Debug = struct {
+pub const DetailPanel = struct {
     const w: f32 = 250;
     const pad: f32 = 12;
     const head_h: f32 = 32;
+    /// Height of a section's own title strip, above its content.
+    const sect_h: f32 = 26;
     const row_h: f32 = 46;
     const track_h: f32 = 6;
     const knob_r: f32 = 7;
@@ -48,9 +54,21 @@ pub const Debug = struct {
     save_flash: f32 = 0,
     save_ok: bool = true,
 
-    fn panelRect() rl.Rectangle {
+    /// Height of the debug section, title strip included. Sections stack top
+    /// to bottom, so a new one just adds its own height here and starts at the
+    /// running offset.
+    fn debugH() f32 {
         const btn: f32 = if (is_web) 0 else btn_h + 8;
-        const h = head_h + fields.len * row_h + btn + pad;
+        return sect_h + fields.len * row_h + btn;
+    }
+
+    /// Y of the debug section's content, i.e. just below its title strip.
+    fn debugTop() f32 {
+        return panelRect().y + head_h + sect_h;
+    }
+
+    fn panelRect() rl.Rectangle {
+        const h = head_h + debugH() + pad;
         return .{
             .x = @as(f32, @floatFromInt(rl.getScreenWidth())) - w - pad,
             .y = pad,
@@ -66,7 +84,7 @@ pub const Debug = struct {
 
     fn trackRect(i: usize) rl.Rectangle {
         const r = panelRect();
-        const row_y = r.y + head_h + @as(f32, @floatFromInt(i)) * row_h;
+        const row_y = debugTop() + @as(f32, @floatFromInt(i)) * row_h;
         return .{ .x = r.x + pad, .y = row_y + 24, .width = w - 2 * pad, .height = track_h };
     }
 
@@ -74,7 +92,7 @@ pub const Debug = struct {
         const r = panelRect();
         return .{
             .x = r.x + pad,
-            .y = r.y + head_h + fields.len * row_h + 4,
+            .y = debugTop() + fields.len * row_h + 4,
             .width = w - 2 * pad,
             .height = btn_h,
         };
@@ -96,7 +114,7 @@ pub const Debug = struct {
         };
     }
 
-    pub fn handleMouse(self: *Debug, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2) void {
+    pub fn handleMouse(self: *DetailPanel, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2) void {
         const m = rl.getMousePosition();
         if (rl.isMouseButtonReleased(.left)) self.dragging = null;
 
@@ -160,7 +178,7 @@ pub const Debug = struct {
     }
 
     /// Ring around the body being edited. Drawn inside the camera transform.
-    pub fn drawSelection(self: Debug, planets: []const sim.Planet) void {
+    pub fn drawSelection(self: DetailPanel, planets: []const sim.Planet) void {
         const idx = self.selected orelse return;
         const p = planets[idx];
         rl.drawCircleLinesV(v(p.pos), p.radius + 6, .{ .r = 255, .g = 210, .b = 90, .a = 200 });
@@ -168,20 +186,37 @@ pub const Debug = struct {
     }
 
     /// The panel itself. Drawn in screen space, after the world.
-    pub fn draw(self: Debug, planets: []const sim.Planet) void {
+    pub fn draw(self: DetailPanel, planets: []const sim.Planet) void {
         const idx = self.selected orelse return;
-        const p = planets[idx];
         const r = panelRect();
 
         rl.drawRectangleRec(r, .{ .r = 12, .g = 16, .b = 30, .a = 230 });
         rl.drawRectangleLinesEx(r, 1, .{ .r = 90, .g = 110, .b = 150, .a = 255 });
 
         const name: [:0]const u8 = if (idx == 0) "earth" else "moon";
-        const title = std.fmt.bufPrintZ(&debug_buf, "debug: {s}", .{name}) catch "debug";
-        rl.drawText(title, @intFromFloat(r.x + pad), @intFromFloat(r.y + 8), 18, .{ .r = 255, .g = 210, .b = 90, .a = 255 });
+        rl.drawText(name, @intFromFloat(r.x + pad), @intFromFloat(r.y + 8), 18, .{ .r = 255, .g = 210, .b = 90, .a = 255 });
 
         const close = closeRect();
         rl.drawText("x", @intFromFloat(close.x + 7), @intFromFloat(close.y + 2), 18, .{ .r = 180, .g = 195, .b = 220, .a = 255 });
+
+        self.drawDebugSection(planets[idx]);
+    }
+
+    /// Title strip for a section: its name and a rule across the panel.
+    fn drawSectionTitle(name: [:0]const u8, top: f32) void {
+        const r = panelRect();
+        rl.drawText(name, @intFromFloat(r.x + pad), @intFromFloat(top + 4), 14, .{ .r = 130, .g = 150, .b = 185, .a = 255 });
+        const line_y = top + sect_h - 6;
+        rl.drawLineV(
+            .{ .x = r.x + pad, .y = line_y },
+            .{ .x = r.x + w - pad, .y = line_y },
+            .{ .r = 60, .g = 75, .b = 105, .a = 255 },
+        );
+    }
+
+    /// Live tuning sliders plus (on desktop) the save-to-config button.
+    fn drawDebugSection(self: DetailPanel, p: sim.Planet) void {
+        drawSectionTitle("debug", panelRect().y + head_h);
 
         for (fields, 0..) |f, i| {
             const t = trackRect(i);
@@ -189,7 +224,7 @@ pub const Debug = struct {
             const frac = std.math.clamp((val - f.min) / (f.max - f.min), 0, 1);
             const fill = t.width * frac;
 
-            const label = std.fmt.bufPrintZ(&debug_buf, "{s}: {d:.0}", .{ f.name, val }) catch "";
+            const label = std.fmt.bufPrintZ(&text_buf, "{s}: {d:.0}", .{ f.name, val }) catch "";
             rl.drawText(label, @intFromFloat(t.x), @intFromFloat(t.y - 20), 18, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
             rl.drawRectangleRec(t, .{ .r = 40, .g = 50, .b = 70, .a = 255 });

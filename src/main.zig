@@ -1,5 +1,5 @@
 //! Entry point and game loop. The raylib-specific code is spread across the
-//! render layer (render.zig), the debug panel (debug_panel.zig) and this
+//! render layer (render.zig), the detail panel (detail_panel.zig) and this
 //! file; the actual physics is in sim.zig, which knows nothing about raylib.
 
 const std = @import("std");
@@ -12,7 +12,7 @@ const render = @import("render.zig");
 const Theme = render.Theme;
 const SpriteSet = render.SpriteSet;
 const Trail = render.Trail;
-const Debug = @import("debug_panel.zig").Debug;
+const DetailPanel = @import("detail_panel.zig").DetailPanel;
 const v = render.v;
 
 /// The browser build renders into a fixed-size canvas, so fullscreen handling
@@ -113,7 +113,7 @@ fn run() !void {
 
     var trail: Trail = .{};
     var show_soi = true;
-    var debug: Debug = .{};
+    var detail: DetailPanel = .{};
     // Where the view sits relative to the followed body, in world px. Keeping
     // it relative means the camera still rides along with the body while you
     // look around. Selecting a planet carries the offset over so the view
@@ -162,7 +162,7 @@ fn run() !void {
             // Selecting a body at the edge of a zoomed-out view can start
             // beyond max_pan, so ratchet: scrolling back in is always
             // allowed, scrolling further out is not.
-            const limit = @max(Debug.max_pan, before);
+            const limit = @max(DetailPanel.max_pan, before);
             if (pan_offset.len() > limit) pan_offset = pan_offset.normalized().scale(limit);
         }
         cam.offset = .{
@@ -172,18 +172,18 @@ fn run() !void {
 
         // Planet picking + slider drags. Runs before the physics steps so an
         // edit shows up on this very frame.
-        debug.handleMouse(&planets, cam, &pan_offset);
-        debug.save_flash = @max(0, debug.save_flash - rl.getFrameTime());
-        if (debug.save_requested) {
-            debug.save_requested = false;
-            if (debug.selected) |idx| {
+        detail.handleMouse(&planets, cam, &pan_offset);
+        detail.save_flash = @max(0, detail.save_flash - rl.getFrameTime());
+        if (detail.save_requested) {
+            detail.save_requested = false;
+            if (detail.selected) |idx| {
                 const p = planets[idx];
                 config.planet(idx).* = .{ .mass = p.mass, .radius = p.radius, .soi = p.soi, .core = p.core };
-                debug.save_ok = if (config.save()) |_| true else |err| blk: {
+                detail.save_ok = if (config.save()) |_| true else |err| blk: {
                     rl.traceLog(.warning, "saving %s failed: %s", .{ cfg.path.ptr, @errorName(err).ptr });
                     break :blk false;
                 };
-                debug.save_flash = 1.5;
+                detail.save_flash = 1.5;
             }
         }
 
@@ -208,7 +208,7 @@ fn run() !void {
         // along with it, so the ship's motion reads relative to that body.
         // Deselecting (click it again, or click empty space) returns to the
         // ship. Scrolling pans the view around whichever body is followed.
-        const follow_pos = if (debug.selected) |idx| planets[idx].pos else world.ship.pos;
+        const follow_pos = if (detail.selected) |idx| planets[idx].pos else world.ship.pos;
         cam.target = v(follow_pos.add(pan_offset));
 
         // --- Draw ----------------------------------------------------------
@@ -242,7 +242,7 @@ fn run() !void {
             if (sprites) |s| {
                 // Both textures are exported at some fixed world size, so scale
                 // each so the sprite spans the body's current physics diameter
-                // — that keeps the debug panel's `size` slider honest.
+                // — that keeps the detail panel's `size` slider honest.
                 s.drawSprite(s.earth, planets[0].pos, 0, render.spriteScale(s, s.earth, planets[0].radius));
                 s.drawSprite(s.moon, planets[1].pos, 0, render.spriteScale(s, s.moon, planets[1].radius));
             } else {
@@ -258,14 +258,14 @@ fn run() !void {
             if (sprites) |s| s.drawSprite(s.iss, iss_pos, iss_deg, 1.0) else render.drawIssClassic(iss_pos, iss_deg);
 
             render.drawShip(world.ship, sprites);
-            debug.drawSelection(&planets);
+            detail.drawSelection(&planets);
 
             // Velocity vector (green) for orbital intuition.
             const vel_end = world.ship.pos.add(world.ship.vel.scale(0.4));
             rl.drawLineEx(v(world.ship.pos), v(vel_end), 2.0, .{ .r = 90, .g = 230, .b = 120, .a = 255 });
         }
 
-        render.drawHud(world, theme, debug.selected);
-        debug.draw(&planets);
+        render.drawHud(world, theme, detail.selected);
+        detail.draw(&planets);
     }
 }
