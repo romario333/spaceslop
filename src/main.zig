@@ -265,7 +265,9 @@ fn run(init: std.process.Init.Minimal) !void {
         // Keep the camera centred on the current window size.
         const wheel = in.wheel;
         if (in.zoom_modifier) {
-            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.15, 4.0);
+            // Floor fits the whole inner system: Mars orbits at r=20000 plus
+            // its SOI, so ~43000 units across; 0.02 shows that in one window.
+            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.02, 4.0);
         } else if (wheel.x != 0 or wheel.y != 0) {
             // Content follows the fingers: a wheel unit moves the view a
             // fixed number of screen px regardless of zoom.
