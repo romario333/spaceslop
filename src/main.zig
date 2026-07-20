@@ -175,10 +175,24 @@ const Debug = struct {
         .{ .name = "size", .min = 5, .max = 600 },
     };
 
+    /// A world press within this many screen px of where it started is a
+    /// click (select/deselect); past it, it becomes a camera pan.
+    const drag_threshold: f32 = 5;
+    /// Cap on how far the view can pan from the followed body, in world px —
+    /// far enough to survey Earth's whole SOI, near enough to never lose the
+    /// starfield (which spans ±3500).
+    const max_pan: f32 = 3500;
+
     selected: ?usize = null,
     /// Which slider owns the mouse right now, so a drag keeps control even
     /// once the cursor wanders off the (thin) track.
     dragging: ?usize = null,
+    /// Screen position where a left press landed in the world (not on the
+    /// panel): a pending click until it travels past `drag_threshold`.
+    press: ?rl.Vector2 = null,
+    /// The current press has become a camera pan, so its release no longer
+    /// selects or deselects anything.
+    panning: bool = false,
     /// Set by the save button; the main loop consumes it and does the file IO.
     save_requested: bool = false,
     /// Seconds left showing the save result on the button; <0 = save failed.
@@ -233,7 +247,7 @@ const Debug = struct {
         };
     }
 
-    fn handleMouse(self: *Debug, planets: []sim.Planet, cam: rl.Camera2D) void {
+    fn handleMouse(self: *Debug, planets: []sim.Planet, cam: rl.Camera2D, pan_offset: *Vec2) void {
         const m = rl.getMousePosition();
         if (rl.isMouseButtonReleased(.left)) self.dragging = null;
 
@@ -241,6 +255,7 @@ const Debug = struct {
             if (rl.isMouseButtonPressed(.left)) {
                 if (rl.checkCollisionPointRec(m, closeRect())) {
                     self.selected = null;
+                    pan_offset.* = .{};
                     return;
                 }
                 if (!is_web and rl.checkCollisionPointRec(m, saveRect())) {
@@ -269,18 +284,62 @@ const Debug = struct {
             if (rl.isMouseButtonPressed(.left) and rl.checkCollisionPointRec(m, panelRect())) return;
         }
 
-        // Click a planet to select it (which also makes it the camera's frame
-        // of reference); click it again, or click empty space, to deselect.
+        // A press in the world is a pending click; once it travels past the
+        // threshold it becomes a camera pan instead.
         if (rl.isMouseButtonPressed(.left)) {
+            self.press = m;
+            self.panning = false;
+        }
+        if (self.press) |p0| {
+            if (rl.isMouseButtonDown(.left)) {
+                if (!self.panning) {
+                    const dx = m.x - p0.x;
+                    const dy = m.y - p0.y;
+                    self.panning = dx * dx + dy * dy > drag_threshold * drag_threshold;
+                }
+                if (self.panning) {
+                    // Screen px -> world px, so one px of drag always moves
+                    // the world one px on screen regardless of zoom.
+                    const d = rl.getMouseDelta();
+                    const before = pan_offset.len();
+                    pan_offset.x -= d.x / cam.zoom;
+                    pan_offset.y -= d.y / cam.zoom;
+                    // Selecting a body at the edge of a zoomed-out view can
+                    // start beyond max_pan, so ratchet: dragging back in is
+                    // always allowed, dragging further out is not.
+                    const limit = @max(max_pan, before);
+                    if (pan_offset.len() > limit) {
+                        pan_offset.* = pan_offset.normalized().scale(limit);
+                    }
+                }
+                return;
+            }
+        }
+
+        // A click (press that never became a pan) selects the planet under it,
+        // which also makes it the camera's frame of reference; clicking it
+        // again, or empty space, deselects and returns the view to the ship.
+        if (rl.isMouseButtonReleased(.left) and self.press != null) {
+            const was_pan = self.panning;
+            self.press = null;
+            self.panning = false;
+            if (was_pan) return;
             const wp = rl.getScreenToWorld2D(m, cam);
             const world_m: Vec2 = .{ .x = wp.x, .y = wp.y };
             const was = self.selected;
             self.selected = null;
+            pan_offset.* = .{};
             for (planets, 0..) |p, i| {
                 // Small bodies stay clickable at any zoom: at least ~24 screen px.
                 const hit = @max(p.radius, 24.0 / cam.zoom);
                 if (world_m.sub(p.pos).len() <= hit) {
-                    if (was != i) self.selected = i;
+                    if (was != i) {
+                        self.selected = i;
+                        // Selecting must not yank the view to the planet:
+                        // keep the camera centre where it is, re-expressed
+                        // as an offset from the newly followed body.
+                        pan_offset.* = (Vec2{ .x = cam.target.x, .y = cam.target.y }).sub(p.pos);
+                    }
                     break;
                 }
             }
@@ -480,6 +539,11 @@ fn run() !void {
     var trail: Trail = .{};
     var show_soi = true;
     var debug: Debug = .{};
+    // Where the view sits relative to the followed body, in world px. Keeping
+    // it relative means the camera still rides along with the body while you
+    // look around. Selecting a planet carries the offset over so the view
+    // doesn't jump; deselecting or R zeroes it, snapping back to the ship.
+    var pan_offset: Vec2 = .{};
 
     var cam: rl.Camera2D = .{
         .target = v(world.ship.pos),
@@ -501,6 +565,7 @@ fn run() !void {
         if (rl.isKeyPressed(.r)) {
             world.ship = initial_ship;
             trail.clear();
+            pan_offset = .{};
         }
         if (!is_web and rl.isKeyPressed(.f)) rl.toggleFullscreen();
         if (rl.isKeyPressed(.t)) theme = theme.next();
@@ -516,7 +581,7 @@ fn run() !void {
 
         // Planet picking + slider drags. Runs before the physics steps so an
         // edit shows up on this very frame.
-        debug.handleMouse(&planets, cam);
+        debug.handleMouse(&planets, cam, &pan_offset);
         debug.save_flash = @max(0, debug.save_flash - rl.getFrameTime());
         if (debug.save_requested) {
             debug.save_requested = false;
@@ -550,8 +615,10 @@ fn run() !void {
         }
         // A selected planet becomes the frame of reference: the camera rides
         // along with it, so the ship's motion reads relative to that body.
-        // Deselecting (click it again, or click empty space) returns to the ship.
-        cam.target = if (debug.selected) |idx| v(planets[idx].pos) else v(world.ship.pos);
+        // Deselecting (click it again, or click empty space) returns to the
+        // ship. Dragging pans the view around whichever body is followed.
+        const follow_pos = if (debug.selected) |idx| planets[idx].pos else world.ship.pos;
+        cam.target = v(follow_pos.add(pan_offset));
 
         // --- Draw ----------------------------------------------------------
         rl.beginDrawing();
@@ -677,9 +744,9 @@ fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
     const controls = if (is_web)
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   O: SOI   R: reset   T: theme   click a planet: debug + follow it"
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: debug + follow it"
     else
-        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: debug + follow it";
+        "W/Up: thrust   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: debug + follow it";
     rl.drawText(
         controls,
         10,
