@@ -1,0 +1,11 @@
+.{ .earth = .{
+    .mass = 8000,
+    .radius = 140,
+    .soi = 2500,
+    .core = 0,
+}, .moon = .{
+    .mass = 4000,
+    .radius = 40,
+    .soi = 770.81635,
+    .core = 110,
+} }

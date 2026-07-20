@@ -41,12 +41,21 @@ cd zig-out/web && python3 -m http.server 8000
 | mouse wheel | zoom |
 | `R` | reset ship |
 | `T` | cycle visual theme (pixelart → scifi-60s → classic) |
+| `O` | toggle sphere-of-influence rings |
+| click a planet | open the debug panel: live sliders for mass, SOI and size |
+
+Planet tuning (mass, visual radius, SOI, gravity core) lives in **`planets.zon`**
+in the project root and is loaded at startup; if the file is missing or invalid
+the built-in defaults are used. The debug panel's **save** button writes the
+current values back to it. The web build has no persistent filesystem, so it
+always uses the defaults and hides the save button.
 
 ## Layout
 
 ```
 src/sim.zig    Pure-Zig simulation: Vec2 math, gravity, integrator. No raylib.
 src/main.zig   Renderer + input. The only file that imports raylib.
+planets.zon    Planet tuning config (ZON), editable in-game via the debug panel.
 web/shell.html Custom Emscripten HTML shell (canvas + loader).
 resources/     Game assets (embedded into the web build), one folder per theme.
 art/           Art source/workspace and the specs the sprites were made to.
