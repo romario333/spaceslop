@@ -35,6 +35,11 @@
       },
     };
     canvas.addEventListener('click', () => canvas.focus());
+    // Debug bridge (src/debug.zig): drive the game from the console or from
+    // automation, e.g. spaceSlopDebug('state'), spaceSlopDebug('click 500 350'),
+    // spaceSlopDebug('pause'), spaceSlopDebug('step 3'). Returns one line of text.
+    window.spaceSlopDebug = (cmd) =>
+      Module.ccall('space_slop_debug', 'string', ['string'], [String(cmd)]);
   </script>
   {{{ SCRIPT }}}
 </body>

@@ -51,11 +51,47 @@ the built-in defaults are used. The debug section's **save** button writes the
 current values back to it. The web build has no persistent filesystem, so it
 always uses the defaults and hides the save button.
 
+## Debug bridge
+
+The game can be driven from outside — for automation, agent-assisted debugging
+or scripted reproduction of timing-sensitive input bugs. One line-based command
+protocol (`src/debug.zig`), two transports:
+
+```sh
+zig build run -- --debug          # native: listens on 127.0.0.1:4444
+zig build run -- --debug 5555     # ...or a custom port
+echo state | nc localhost 4444    # one-shot query
+```
+
+On the web build the same dispatcher is exported to the page; open the browser
+console and call `spaceSlopDebug('state')`.
+
+| Command | Effect |
+|---------|--------|
+| `state` | dump the whole game state as one line of JSON |
+| `screenshot <path>` | save a screenshot of the current frame (native only) |
+| `click <x> <y> [hold]` | synthetic left click at screen px, held `hold` frames; `hold 0` = press **and** release inside one frame (the flaky-trackpad-tap case) |
+| `clickw <wx> <wy> [hold]` | same, but world coordinates (e.g. `clickw 0 0` clicks Earth) |
+| `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust`, one-shots `r/t/o/f` |
+| `wheel <dx> <dy>` | one frame of scroll (pans the view) |
+| `zoom <dy>` | one frame of cmd+scroll (zooms) |
+| `pause` / `resume` | freeze / unfreeze the simulation (rendering keeps running) |
+| `step [n]` | while paused: advance exactly n fixed physics steps, one per rendered frame |
+
+Synthetic input is injected in `src/input.zig`, upstream of the same code paths
+real input takes. Held keys only tick down on frames where physics actually
+steps, so `key thrust 3` + `step 3` is exactly three thrusting steps no matter
+how long the sim sits paused in between — sequences real devices only produce
+occasionally can be constructed deliberately.
+
 ## Layout
 
 ```
 src/sim.zig    Pure-Zig simulation: Vec2 math, gravity, integrator. No raylib.
-src/main.zig   Renderer + input. The only file that imports raylib.
+src/main.zig   Entry point and game loop.
+src/render.zig Drawing layer: themes, sprites, trail, HUD.
+src/input.zig  Input seam: real raylib input + debug-injected synthetic events.
+src/debug.zig  Debug bridge: command dispatcher, TCP server, web export.
 planets.zon    Planet tuning config (ZON), editable in-game via the detail panel.
 web/shell.html Custom Emscripten HTML shell (canvas + loader).
 resources/     Game assets (embedded into the web build), one folder per theme.

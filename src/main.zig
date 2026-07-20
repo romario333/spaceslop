@@ -8,12 +8,13 @@ const rl = @import("raylib");
 const sim = @import("sim.zig");
 const Vec2 = sim.Vec2;
 const cfg = @import("config.zig");
-const input_shim = @import("input.zig");
 const render = @import("render.zig");
 const Theme = render.Theme;
 const SpriteSet = render.SpriteSet;
 const Trail = render.Trail;
 const DetailPanel = @import("detail_panel.zig").DetailPanel;
+const input = @import("input.zig");
+const dbg = @import("debug.zig");
 const v = render.v;
 
 /// The browser build renders into a fixed-size canvas, so fullscreen handling
@@ -26,17 +27,19 @@ const screen_h = 700;
 /// `main` must not return errors: the std error-printing path that would
 /// handle them pulls in child-process code that doesn't compile for
 /// wasm32-emscripten (same std-lib issue that breaks Debug web builds).
-pub fn main() void {
-    run() catch |err| rl.traceLog(.err, "fatal: %s", .{@errorName(err).ptr});
+/// It takes `Init.Minimal` (not the full `Init`) for the same reason: the
+/// full version drags in environment/IO machinery the web target can't build.
+pub fn main(init: std.process.Init.Minimal) void {
+    run(init) catch |err| rl.traceLog(.err, "fatal: %s", .{@errorName(err).ptr});
 }
 
-fn run() !void {
+fn run(init: std.process.Init.Minimal) !void {
     rl.setConfigFlags(.{ .vsync_hint = true, .window_resizable = true, .msaa_4x_hint = true });
     rl.initWindow(screen_w, screen_h, "space-slop");
     defer rl.closeWindow();
     // Catch clicks shorter than a frame (trackpad taps) that raylib's own
     // per-frame polling loses; see input.zig.
-    input_shim.init();
+    input.init();
 
     // Native builds start fullscreen at the monitor's native resolution.
     if (!is_web) {
@@ -131,31 +134,72 @@ fn run() !void {
         .zoom = 1.0,
     };
 
+    // --- Debug bridge ------------------------------------------------------
+    // Always wired (the web build's exported dispatcher may be called at any
+    // time); the native TCP transport only starts when asked to.
+    dbg.init(.{
+        .world = &world,
+        .planets = &planets,
+        .cam = &cam,
+        .detail = &detail,
+        .pan_offset = &pan_offset,
+        .theme = &theme,
+    });
+    if (!is_web) {
+        var args = std.process.Args.Iterator.init(init.args);
+        _ = args.next(); // program name
+        var debug_requested = false;
+        var debug_port: u16 = 4444;
+        while (args.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--debug")) {
+                debug_requested = true;
+            } else if (debug_requested) {
+                debug_port = std.fmt.parseInt(u16, arg, 10) catch debug_port;
+            }
+        }
+        if (debug_requested) dbg.serve(debug_port);
+    }
+
     // --- Fixed-timestep loop ----------------------------------------------
     const fixed_dt: f32 = 1.0 / 120.0;
     var accumulator: f32 = 0;
 
     while (!rl.windowShouldClose()) {
+        dbg.pump();
+
+        // How many fixed steps to run this frame: real elapsed time normally;
+        // while the debug bridge holds the sim paused, exactly one step per
+        // rendered frame from the `step` budget, so injected per-frame input
+        // lands deterministically.
+        var steps: u32 = 0;
+        if (dbg.paused) {
+            accumulator = 0; // don't bank real time while frozen
+            if (dbg.steps_pending > 0) {
+                dbg.steps_pending -= 1;
+                steps = 1;
+            }
+        } else {
+            accumulator += rl.getFrameTime();
+            if (accumulator > 0.25) accumulator = 0.25; // avoid spiral of death
+            while (accumulator >= fixed_dt) : (accumulator -= fixed_dt) steps += 1;
+        }
+
         // Input -> simulation intent
-        var input: sim.Input = .{};
-        if (rl.isKeyDown(.a) or rl.isKeyDown(.left)) input.turn -= 1;
-        if (rl.isKeyDown(.d) or rl.isKeyDown(.right)) input.turn += 1;
-        input.thrust = rl.isKeyDown(.w) or rl.isKeyDown(.up);
-        input.brake = rl.isKeyDown(.s) or rl.isKeyDown(.down);
-        if (rl.isKeyPressed(.r)) {
+        const in = input.sample(steps > 0);
+        const sim_input: sim.Input = .{ .turn = in.turn, .thrust = in.thrust, .brake = in.brake };
+        if (in.reset) {
             world.ship = initial_ship;
             trail.clear();
             pan_offset = .{};
         }
-        if (!is_web and rl.isKeyPressed(.f)) rl.toggleFullscreen();
-        if (rl.isKeyPressed(.t)) theme = theme.next();
-        if (rl.isKeyPressed(.o)) show_soi = !show_soi;
+        if (!is_web and in.fullscreen) rl.toggleFullscreen();
+        if (in.cycle_theme) theme = theme.next();
+        if (in.toggle_soi) show_soi = !show_soi;
 
         // Two-finger scroll pans the view; hold cmd (super) to zoom instead.
         // Keep the camera centred on the current window size.
-        const wheel = rl.getMouseWheelMoveV();
-        const zoom_modifier = rl.isKeyDown(.left_super) or rl.isKeyDown(.right_super);
-        if (zoom_modifier) {
+        const wheel = in.wheel;
+        if (in.zoom_modifier) {
             if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.15, 4.0);
         } else if (wheel.x != 0 or wheel.y != 0) {
             // Content follows the fingers: a wheel unit moves the view a
@@ -177,7 +221,7 @@ fn run() !void {
 
         // Planet picking + slider drags. Runs before the physics steps so an
         // edit shows up on this very frame.
-        detail.handleMouse(&planets, cam, &pan_offset, input_shim.poll());
+        detail.handleMouse(&planets, cam, &pan_offset, in.mouse);
         detail.save_flash = @max(0, detail.save_flash - rl.getFrameTime());
         if (detail.save_requested) {
             detail.save_requested = false;
@@ -192,10 +236,8 @@ fn run() !void {
             }
         }
 
-        // Advance physics in fixed steps, decoupled from render framerate.
-        accumulator += rl.getFrameTime();
-        if (accumulator > 0.25) accumulator = 0.25; // avoid spiral of death
-        while (accumulator >= fixed_dt) : (accumulator -= fixed_dt) {
+        // Advance physics in fixed steps (count decided above).
+        while (steps > 0) : (steps -= 1) {
             // The moon is kinematic: it moves on a fixed circle and the ship
             // physics just sees its updated position each step. Its frame
             // acceleration (centripetal, toward Earth) lets ships in its SOI
@@ -205,9 +247,10 @@ fn run() !void {
             planets[1].pos = planets[0].pos.add(moon_dir.scale(moon_orbit_r));
             planets[1].vel = (Vec2{ .x = -moon_dir.y, .y = moon_dir.x }).scale(moon_omega * moon_orbit_r);
             planets[1].acc = moon_dir.scale(-moon_omega * moon_omega * moon_orbit_r);
-            world.step(fixed_dt, input);
+            world.step(fixed_dt, sim_input);
             trail.push(world.ship.pos);
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
+            dbg.step_count += 1;
         }
         // A selected planet becomes the frame of reference: the camera rides
         // along with it, so the ship's motion reads relative to that body.
@@ -274,5 +317,9 @@ fn run() !void {
 
         render.drawHud(world, theme, detail.selected);
         detail.draw(&planets);
+
+        // Runs before the deferred endDrawing above swaps buffers, so a
+        // requested screenshot captures exactly this frame.
+        dbg.finishFrame();
     }
 }
