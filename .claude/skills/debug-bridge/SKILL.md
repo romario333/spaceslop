@@ -25,28 +25,48 @@ small and unfocused and keeps running minimized — it won't interrupt the user.
 
 ```sh
 zig build
+rm -f .debug-bridge-port
 nohup ./zig-out/bin/space-slop --debug > /tmp/space-slop.log 2>&1 &
+echo $! > /tmp/space-slop.pid
 sleep 2   # window + listener need a moment
+PORT=$(cat .debug-bridge-port)
 ```
 
 `nohup` matters: without it the game dies when the launching shell exits.
-Default port 4444 (`--debug 5555` for another). Kill when done:
-`pkill -f "space-slop --debug"`.
+
+**Never assume the port.** Several worktrees of this repo are often driven at
+the same time; a hardcoded port would connect you to another agent's game.
+The instance claims the first free port from 4444 upward and writes the one it
+got to `.debug-bridge-port` in its cwd (gitignored) — read that file, in *your*
+worktree, and always delete it before launching so a stale value from an
+earlier run can't point you at someone else's instance. `--debug 5555` moves
+the scan's starting point if you want a recognisable range.
+
+For the same reason, kill by pid, not by pattern — `pkill -f "space-slop
+--debug"` takes down every worktree's instance:
+
+```sh
+kill $(cat /tmp/space-slop.pid); rm -f .debug-bridge-port
+```
+
+(Use a per-worktree log/pid path, or keep them inside the worktree, if you
+launch from several checkouts in one session.)
 
 ## Talking to it
 
 One-shot (fine for single commands):
 
 ```sh
-echo state | nc -w 2 localhost 4444
+echo state | nc -w 2 localhost $(cat .debug-bridge-port)
 ```
 
 For multi-command sequences (pause → inject → step → assert), keep one
 connection open from a Python script — `zsh` has no `/dev/tcp`:
 
 ```python
-import socket, json, time
-f = socket.create_connection(("127.0.0.1", 4444)).makefile("rw")
+import socket, json, time, pathlib
+port = int(pathlib.Path(".debug-bridge-port").read_text())
+f = socket.create_connection(("127.0.0.1", port)).makefile("rw")
 def send(cmd):
     f.write(cmd + "\n"); f.flush()
     return f.readline().strip()
@@ -86,10 +106,13 @@ clock — same commands from a fresh launch replay identically.
 
 ```sh
 zig build -Dtarget=wasm32-emscripten     # slow; retry once if the emcc cache errors on first run
-cd zig-out/web && python3 -m http.server 8000
+cd zig-out/web && python3 -u -m http.server 0 > /tmp/space-slop-web.log 2>&1 &
+sleep 1 && grep -o 'port [0-9]*' /tmp/space-slop-web.log
 ```
 
-Open `http://localhost:8000/space_slop.html` with the browser preview tools,
+Port 0 for the same reason as above — port 8000 may already be another
+worktree's build, and you'd silently drive the wrong game. Open
+`http://localhost:<that port>/space_slop.html` with the browser preview tools,
 then call the same protocol via `preview_evaluate`:
 `window.spaceSlopDebug('state')`. Screenshots are unsupported there — use
 `preview_snapshot`; and note a hidden tab renders ~1 frame/s, so `step n`
