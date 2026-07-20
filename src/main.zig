@@ -175,9 +175,6 @@ const Debug = struct {
         .{ .name = "size", .min = 5, .max = 600 },
     };
 
-    /// A world press within this many screen px of where it started is a
-    /// click (select/deselect); past it, it becomes a camera pan.
-    const drag_threshold: f32 = 5;
     /// Cap on how far the view can pan from the followed body, in world px —
     /// far enough to survey Earth's whole SOI, near enough to never lose the
     /// starfield (which spans ±3500).
@@ -187,12 +184,6 @@ const Debug = struct {
     /// Which slider owns the mouse right now, so a drag keeps control even
     /// once the cursor wanders off the (thin) track.
     dragging: ?usize = null,
-    /// Screen position where a left press landed in the world (not on the
-    /// panel): a pending click until it travels past `drag_threshold`.
-    press: ?rl.Vector2 = null,
-    /// The current press has become a camera pan, so its release no longer
-    /// selects or deselects anything.
-    panning: bool = false,
     /// Set by the save button; the main loop consumes it and does the file IO.
     save_requested: bool = false,
     /// Seconds left showing the save result on the button; <0 = save failed.
@@ -284,46 +275,10 @@ const Debug = struct {
             if (rl.isMouseButtonPressed(.left) and rl.checkCollisionPointRec(m, panelRect())) return;
         }
 
-        // A press in the world is a pending click; once it travels past the
-        // threshold it becomes a camera pan instead.
+        // A click in the world selects the planet under it, which also makes
+        // it the camera's frame of reference; clicking it again, or empty
+        // space, deselects and returns the view to the ship.
         if (rl.isMouseButtonPressed(.left)) {
-            self.press = m;
-            self.panning = false;
-        }
-        if (self.press) |p0| {
-            if (rl.isMouseButtonDown(.left)) {
-                if (!self.panning) {
-                    const dx = m.x - p0.x;
-                    const dy = m.y - p0.y;
-                    self.panning = dx * dx + dy * dy > drag_threshold * drag_threshold;
-                }
-                if (self.panning) {
-                    // Screen px -> world px, so one px of drag always moves
-                    // the world one px on screen regardless of zoom.
-                    const d = rl.getMouseDelta();
-                    const before = pan_offset.len();
-                    pan_offset.x -= d.x / cam.zoom;
-                    pan_offset.y -= d.y / cam.zoom;
-                    // Selecting a body at the edge of a zoomed-out view can
-                    // start beyond max_pan, so ratchet: dragging back in is
-                    // always allowed, dragging further out is not.
-                    const limit = @max(max_pan, before);
-                    if (pan_offset.len() > limit) {
-                        pan_offset.* = pan_offset.normalized().scale(limit);
-                    }
-                }
-                return;
-            }
-        }
-
-        // A click (press that never became a pan) selects the planet under it,
-        // which also makes it the camera's frame of reference; clicking it
-        // again, or empty space, deselects and returns the view to the ship.
-        if (rl.isMouseButtonReleased(.left) and self.press != null) {
-            const was_pan = self.panning;
-            self.press = null;
-            self.panning = false;
-            if (was_pan) return;
             const wp = rl.getScreenToWorld2D(m, cam);
             const world_m: Vec2 = .{ .x = wp.x, .y = wp.y };
             const was = self.selected;
@@ -571,9 +526,25 @@ fn run() !void {
         if (rl.isKeyPressed(.t)) theme = theme.next();
         if (rl.isKeyPressed(.o)) show_soi = !show_soi;
 
-        // Zoom on scroll, keep camera centred on the current window size.
-        const wheel = rl.getMouseWheelMove();
-        if (wheel != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel * 0.1), 0.15, 4.0);
+        // Two-finger scroll pans the view; hold cmd (super) to zoom instead.
+        // Keep the camera centred on the current window size.
+        const wheel = rl.getMouseWheelMoveV();
+        const zoom_modifier = rl.isKeyDown(.left_super) or rl.isKeyDown(.right_super);
+        if (zoom_modifier) {
+            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.15, 4.0);
+        } else if (wheel.x != 0 or wheel.y != 0) {
+            // Content follows the fingers: a wheel unit moves the view a
+            // fixed number of screen px regardless of zoom.
+            const scroll_speed: f32 = 20.0;
+            const before = pan_offset.len();
+            pan_offset.x -= wheel.x * scroll_speed / cam.zoom;
+            pan_offset.y -= wheel.y * scroll_speed / cam.zoom;
+            // Selecting a body at the edge of a zoomed-out view can start
+            // beyond max_pan, so ratchet: scrolling back in is always
+            // allowed, scrolling further out is not.
+            const limit = @max(Debug.max_pan, before);
+            if (pan_offset.len() > limit) pan_offset = pan_offset.normalized().scale(limit);
+        }
         cam.offset = .{
             .x = @as(f32, @floatFromInt(rl.getScreenWidth())) / 2.0,
             .y = @as(f32, @floatFromInt(rl.getScreenHeight())) / 2.0,
@@ -616,7 +587,7 @@ fn run() !void {
         // A selected planet becomes the frame of reference: the camera rides
         // along with it, so the ship's motion reads relative to that body.
         // Deselecting (click it again, or click empty space) returns to the
-        // ship. Dragging pans the view around whichever body is followed.
+        // ship. Scrolling pans the view around whichever body is followed.
         const follow_pos = if (debug.selected) |idx| planets[idx].pos else world.ship.pos;
         cam.target = v(follow_pos.add(pan_offset));
 
