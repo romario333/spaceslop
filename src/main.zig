@@ -24,6 +24,64 @@ const is_web = builtin.target.os.tag == .emscripten;
 const screen_w = 1000;
 const screen_h = 700;
 
+/// Index of Earth in the canonical body order (see cfg.names); the ship
+/// spawns there and the ISS orbits it.
+const earth_idx = 3;
+
+const Orbit = struct { parent: usize, radius: f32, omega: f32, phase: f32 };
+
+/// Scripted circular orbit of each body, index-aligned with the planets array
+/// (null = the sun, which sits still at the origin). Parents must precede
+/// their children so updateOrbits reads fresh parent state within one pass.
+/// Angular speeds are ~10% of the physically correct rate for each altitude —
+/// the same arcade slowdown the moon always had, keeping Keplerian ordering
+/// (inner planets visibly outpace outer ones) while an SOI never outruns a
+/// ship trying to get captured. Orbit radii leave clear water between
+/// neighbouring SOIs (e.g. Venus tops out at 11500 from the sun, Earth's
+/// begins at 12000) so patched conics stay unambiguous.
+const orbits = [_]?Orbit{
+    null, // sun
+    .{ .parent = 0, .radius = 5500, .omega = 0.0027, .phase = 2.0 }, // mercury
+    .{ .parent = 0, .radius = 9500, .omega = 0.0012, .phase = 4.2 }, // venus
+    .{ .parent = 0, .radius = 14500, .omega = 0.0006, .phase = 0.0 }, // earth
+    .{ .parent = earth_idx, .radius = 1500, .omega = 0.008, .phase = -0.4 }, // moon
+    .{ .parent = 0, .radius = 20000, .omega = 0.0004, .phase = 5.3 }, // mars
+};
+
+comptime {
+    std.debug.assert(orbits.len == cfg.names.len);
+}
+
+/// Advance every scripted orbit by `dt` and refresh each body's kinematic
+/// state: position on its circle, world velocity, and frame acceleration
+/// (the parent's acceleration plus this body's own centripetal term). The
+/// acceleration is what lets ships inside a moving SOI ride along with the
+/// body (see sim.Planet.acc).
+fn updateOrbits(planets: []sim.Planet, angles: []f32, dt: f32) void {
+    for (orbits, 0..) |maybe_orbit, i| {
+        const o = maybe_orbit orelse continue;
+        angles[i] = @mod(angles[i] + o.omega * dt, std.math.tau);
+        const parent = planets[o.parent];
+        const dir = Vec2.fromAngle(angles[i]);
+        planets[i].pos = parent.pos.add(dir.scale(o.radius));
+        planets[i].vel = parent.vel.add((Vec2{ .x = -dir.y, .y = dir.x }).scale(o.omega * o.radius));
+        planets[i].acc = parent.acc.add(dir.scale(-o.omega * o.omega * o.radius));
+    }
+}
+
+/// The ship's spawn state: a counter-clockwise circular low orbit around
+/// Earth, wherever Earth currently is. Also used by the R-key reset, so
+/// resetting mid-flight puts you back home rather than where Earth used to be.
+fn shipStart(earth: sim.Planet) sim.Ship {
+    const r: f32 = 340;
+    const speed = sim.World.circularOrbitSpeed(earth.mass, r);
+    return .{
+        .pos = earth.pos.add(.{ .x = r }),
+        .vel = earth.vel.add(.{ .y = speed }),
+        .angle = -std.math.pi / 2.0, // nose pointing "up" (-y)
+    };
+}
+
 /// `main` must not return errors: the std error-printing path that would
 /// handle them pulls in child-process code that doesn't compile for
 /// wasm32-emscripten (same std-lib issue that breaks Debug web builds).
@@ -88,42 +146,30 @@ fn run(init: std.process.Init.Minimal) !void {
     defer for (sprite_sets) |s| s.unload();
 
     // --- World setup -------------------------------------------------------
-    // Gravity uses arcade patched conics (see sim.gravityAt): inside the
-    // moon's sphere of influence only the moon pulls, everywhere else only
-    // Earth does, so orbits around both bodies are clean stable ellipses.
-    // The moon is small on screen but pulls hard (mass on par with what a
-    // much larger body would have): a deep well inside a tight 400 px SOI
-    // bubble, plus the sim's capture assist, means a ship that coasts in
-    // slowly settles into orbit on its own — while fast flybys slingshot
-    // through undisturbed and Earth orbits below ~1100 px never feel the
-    // moon at all. Beyond Earth's SOI there is no gravity: deep space.
-    // Tuning values come from planets.zon (see config.zig); positions stay
-    // here because the moon's is overwritten by its scripted orbit every frame.
+    // Gravity uses arcade patched conics (see sim.gravityAt): only the body
+    // whose innermost sphere of influence contains the ship pulls on it, so
+    // orbits around every body are clean stable ellipses. The whole system is
+    // scripted kinematics — the sun sits at the origin, Mercury through Mars
+    // circle it, the moon circles Earth (see `orbits`) — and each body's SOI
+    // travels with it. Bodies are small on screen but pull hard: deep wells
+    // inside tight SOI bubbles, plus the sim's capture assist, mean a ship
+    // that coasts in slowly settles into orbit on its own, while fast flybys
+    // slingshot through undisturbed. Beyond the sun's SOI there is no
+    // gravity: deep space. Tuning values come from planets.zon (config.zig).
     var config = cfg.Config.load();
-    var planets = [_]sim.Planet{
-        .{ .pos = .{ .x = 0, .y = 0 }, .mass = config.earth.mass, .radius = config.earth.radius, .soi = config.earth.soi, .core = config.earth.core },
-        .{ .pos = .{ .x = 1383, .y = -580 }, .mass = config.moon.mass, .radius = config.moon.radius, .soi = config.moon.soi, .core = config.moon.core },
-    };
+    var planets: [cfg.names.len]sim.Planet = undefined;
+    for (&planets, 0..) |*p, i| {
+        const c = config.planet(i).*;
+        p.* = .{ .pos = .{}, .mass = c.mass, .radius = c.radius, .soi = c.soi, .core = c.core };
+    }
+    var angles: [orbits.len]f32 = undefined;
+    for (orbits, 0..) |o, i| angles[i] = if (o) |orb| orb.phase else 0;
+    updateOrbits(&planets, &angles, 0); // place every body before the first frame
 
-    // The moon slowly circles Earth: it covers its own diameter in ~7 s —
-    // clearly visible, but slow next to ship speeds (~10% of the physically
-    // correct orbital rate), so leading the moon on an outbound flight stays
-    // easy and its SOI doesn't run away from a ship trying to be captured.
-    const moon_orbit_r = planets[1].pos.sub(planets[0].pos).len();
-    const moon_omega: f32 = 0.008; // rad/s
-    var moon_angle: f32 = std.math.atan2(planets[1].pos.y, planets[1].pos.x);
-
-    const start_r: f32 = 340;
-    const orbit_speed = sim.World.circularOrbitSpeed(planets[0].mass, start_r);
     var world: sim.World = .{
         .planets = &planets,
-        .ship = .{
-            .pos = .{ .x = start_r, .y = 0 },
-            .vel = .{ .x = 0, .y = orbit_speed }, // counter-clockwise circular orbit
-            .angle = -std.math.pi / 2.0, // nose pointing "up" (-y)
-        },
+        .ship = shipStart(planets[earth_idx]),
     };
-    const initial_ship = world.ship;
 
     // Decorative ISS on a low circular orbit around the primary planet. It
     // lives entirely in the render layer and never affects the physics. Its
@@ -131,18 +177,22 @@ fn run(init: std.process.Init.Minimal) !void {
     // then gets slowed by an arcade factor so the orbit reads at a glance.
     const iss_orbit_r: f32 = 190;
     const iss_speed_scale: f32 = 0.45;
-    const iss_omega = iss_speed_scale * sim.World.circularOrbitSpeed(planets[0].mass, iss_orbit_r) / iss_orbit_r;
+    const iss_omega = iss_speed_scale * sim.World.circularOrbitSpeed(planets[earth_idx].mass, iss_orbit_r) / iss_orbit_r;
     var iss_angle: f32 = 0;
 
-    // Static starfield in world space, generated once with a fixed seed.
-    // Wide enough to cover the moon's whole orbit (radius ~2200).
+    // Starfield tile, generated once with a fixed seed. A single static field
+    // spanning the whole solar system (~50k px across) would need tens of
+    // thousands of stars, so instead this one tile repeats: at draw time every
+    // copy that intersects the view is drawn, which keeps the on-screen star
+    // density constant wherever the ship travels.
+    const star_tile: f32 = 7000.0;
     var stars: [1500]rl.Vector2 = undefined;
     var prng = std.Random.DefaultPrng.init(0x5EED_1234);
     const rng = prng.random();
     for (&stars) |*s| {
         s.* = .{
-            .x = rng.float(f32) * 7000.0 - 3500.0,
-            .y = rng.float(f32) * 7000.0 - 3500.0,
+            .x = rng.float(f32) * star_tile - star_tile / 2.0,
+            .y = rng.float(f32) * star_tile - star_tile / 2.0,
         };
     }
 
@@ -203,7 +253,7 @@ fn run(init: std.process.Init.Minimal) !void {
         const in = input.sample(steps > 0);
         const sim_input: sim.Input = .{ .turn = in.turn, .thrust = in.thrust, .brake = in.brake };
         if (in.reset) {
-            world.ship = initial_ship;
+            world.ship = shipStart(planets[earth_idx]);
             trail.clear();
             pan_offset = .{};
         }
@@ -253,15 +303,10 @@ fn run(init: std.process.Init.Minimal) !void {
 
         // Advance physics in fixed steps (count decided above).
         while (steps > 0) : (steps -= 1) {
-            // The moon is kinematic: it moves on a fixed circle and the ship
-            // physics just sees its updated position each step. Its frame
-            // acceleration (centripetal, toward Earth) lets ships in its SOI
-            // ride along with it (see sim.Planet.acc).
-            moon_angle = @mod(moon_angle + moon_omega * fixed_dt, std.math.tau);
-            const moon_dir = Vec2.fromAngle(moon_angle);
-            planets[1].pos = planets[0].pos.add(moon_dir.scale(moon_orbit_r));
-            planets[1].vel = (Vec2{ .x = -moon_dir.y, .y = moon_dir.x }).scale(moon_omega * moon_orbit_r);
-            planets[1].acc = moon_dir.scale(-moon_omega * moon_omega * moon_orbit_r);
+            // All bodies are kinematic: they move on fixed circles and the
+            // ship physics just sees their updated positions each step (see
+            // updateOrbits and sim.Planet.acc).
+            updateOrbits(&planets, &angles, fixed_dt);
             world.step(fixed_dt, sim_input);
             trail.push(world.ship.pos);
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
@@ -285,7 +330,30 @@ fn run(init: std.process.Init.Minimal) !void {
             rl.beginMode2D(cam);
             defer rl.endMode2D();
 
-            for (stars) |s| rl.drawCircleV(s, 1.0, .{ .r = 170, .g = 170, .b = 200, .a = 255 });
+            // Draw every copy of the star tile that intersects the view (a
+            // copy at tile index k covers k*tile ± tile/2 around the origin).
+            {
+                const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+                const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+                const half = star_tile / 2.0;
+                const tx0: i32 = @intFromFloat(@ceil((cam.target.x - view_w / 2.0 - half) / star_tile));
+                const tx1: i32 = @intFromFloat(@floor((cam.target.x + view_w / 2.0 + half) / star_tile));
+                const ty0: i32 = @intFromFloat(@ceil((cam.target.y - view_h / 2.0 - half) / star_tile));
+                const ty1: i32 = @intFromFloat(@floor((cam.target.y + view_h / 2.0 + half) / star_tile));
+                var ty = ty0;
+                while (ty <= ty1) : (ty += 1) {
+                    var tx = tx0;
+                    while (tx <= tx1) : (tx += 1) {
+                        const ox = @as(f32, @floatFromInt(tx)) * star_tile;
+                        const oy = @as(f32, @floatFromInt(ty)) * star_tile;
+                        for (stars) |s| rl.drawCircleV(
+                            .{ .x = s.x + ox, .y = s.y + oy },
+                            1.0,
+                            .{ .r = 170, .g = 170, .b = 200, .a = 255 },
+                        );
+                    }
+                }
+            }
 
             trail.draw();
 
@@ -305,11 +373,13 @@ fn run(init: std.process.Init.Minimal) !void {
             }
 
             if (sprites) |s| {
-                // Both textures are exported at some fixed world size, so scale
+                // Textures are exported at some fixed world size, so scale
                 // each so the sprite spans the body's current physics diameter
                 // — that keeps the detail panel's `size` slider honest.
-                s.drawSprite(s.earth, planets[0].pos, 0, render.spriteScale(s, s.earth, planets[0].radius));
-                s.drawSprite(s.moon, planets[1].pos, 0, render.spriteScale(s, s.moon, planets[1].radius));
+                for (planets, 0..) |p, i| {
+                    const tex = s.body(i);
+                    s.drawSprite(tex, p.pos, 0, render.spriteScale(s, tex, p.radius));
+                }
             } else {
                 for (planets) |p| {
                     rl.drawCircleV(v(p.pos), p.radius, .{ .r = 90, .g = 120, .b = 160, .a = 255 });
@@ -318,7 +388,7 @@ fn run(init: std.process.Init.Minimal) !void {
             }
 
             // ISS orbits Earth with its truss tangent to the orbit.
-            const iss_pos = planets[0].pos.add(Vec2.fromAngle(iss_angle).scale(iss_orbit_r));
+            const iss_pos = planets[earth_idx].pos.add(Vec2.fromAngle(iss_angle).scale(iss_orbit_r));
             const iss_deg = iss_angle * 180.0 / std.math.pi + 90.0;
             if (sprites) |s| s.drawSprite(s.iss, iss_pos, iss_deg, 1.0) else render.drawIssClassic(iss_pos, iss_deg);
 

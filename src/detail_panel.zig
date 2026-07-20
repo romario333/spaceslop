@@ -37,15 +37,15 @@ pub const DetailPanel = struct {
     /// distance at which gravity stops growing, which is what "how big is this
     /// planet" means here.
     const fields = [_]Field{
-        .{ .name = "mass", .min = 0, .max = 40000 },
-        .{ .name = "soi", .min = 50, .max = 6000 },
-        .{ .name = "size", .min = 5, .max = 600 },
+        .{ .name = "mass", .min = 0, .max = 120000 },
+        .{ .name = "soi", .min = 50, .max = 30000 },
+        .{ .name = "size", .min = 5, .max = 800 },
     };
 
     /// Cap on how far the view can pan from the followed body, in world px —
-    /// far enough to survey Earth's whole SOI, near enough to never lose the
-    /// starfield (which spans ±3500).
-    pub const max_pan: f32 = 3500;
+    /// far enough to survey the sun's whole SOI (the starfield tiles, so
+    /// panning can never outrun it).
+    pub const max_pan: f32 = 26000;
 
     selected: ?usize = null,
     /// Top-left of the panel in screen space, recomputed each frame from the
@@ -229,7 +229,7 @@ pub const DetailPanel = struct {
         rl.drawRectangleRec(r, .{ .r = 12, .g = 16, .b = 30, .a = 230 });
         rl.drawRectangleLinesEx(r, 1, .{ .r = 90, .g = 110, .b = 150, .a = 255 });
 
-        const name: [:0]const u8 = if (idx == 0) "earth" else "moon";
+        const name = config.names[idx];
         rl.drawText(name, @intFromFloat(r.x + pad), @intFromFloat(r.y + 8), 18, .{ .r = 255, .g = 210, .b = 90, .a = 255 });
 
         const close = self.closeRect();

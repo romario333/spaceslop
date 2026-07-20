@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const rl = @import("raylib");
 const sim = @import("sim.zig");
 const Vec2 = sim.Vec2;
+const cfg = @import("config.zig");
 
 const is_web = builtin.target.os.tag == .emscripten;
 
@@ -44,31 +45,50 @@ pub const Theme = enum {
 /// planet texture spans exactly its physics diameter — Earth renders at its
 /// full 280 px world diameter and collisions line up.
 pub const SpriteSet = struct {
+    sun: rl.Texture2D,
+    mercury: rl.Texture2D,
+    venus: rl.Texture2D,
     earth: rl.Texture2D,
     moon: rl.Texture2D,
+    mars: rl.Texture2D,
     ship: rl.Texture2D,
     iss: rl.Texture2D,
     px_scale: f32,
 
     pub fn load(comptime dir: []const u8, px_scale: f32, filter: rl.TextureFilter) !SpriteSet {
         const set: SpriteSet = .{
+            .sun = try rl.loadTexture("resources/" ++ dir ++ "/sun.png"),
+            .mercury = try rl.loadTexture("resources/" ++ dir ++ "/mercury.png"),
+            .venus = try rl.loadTexture("resources/" ++ dir ++ "/venus.png"),
             .earth = try rl.loadTexture("resources/" ++ dir ++ "/earth.png"),
             .moon = try rl.loadTexture("resources/" ++ dir ++ "/moon.png"),
+            .mars = try rl.loadTexture("resources/" ++ dir ++ "/mars.png"),
             .ship = try rl.loadTexture("resources/" ++ dir ++ "/ship.png"),
             .iss = try rl.loadTexture("resources/" ++ dir ++ "/iss.png"),
             .px_scale = px_scale,
         };
-        for ([_]rl.Texture2D{ set.earth, set.moon, set.ship, set.iss }) |t| {
-            rl.setTextureFilter(t, filter);
-        }
+        for (set.all()) |t| rl.setTextureFilter(t, filter);
         return set;
     }
 
     pub fn unload(self: SpriteSet) void {
-        rl.unloadTexture(self.earth);
-        rl.unloadTexture(self.moon);
-        rl.unloadTexture(self.ship);
-        rl.unloadTexture(self.iss);
+        for (self.all()) |t| rl.unloadTexture(t);
+    }
+
+    fn all(self: SpriteSet) [8]rl.Texture2D {
+        return .{ self.sun, self.mercury, self.venus, self.earth, self.moon, self.mars, self.ship, self.iss };
+    }
+
+    /// Texture of the world's body at `idx` — canonical body order (cfg.names).
+    pub fn body(self: *const SpriteSet, idx: usize) rl.Texture2D {
+        return switch (idx) {
+            0 => self.sun,
+            1 => self.mercury,
+            2 => self.venus,
+            3 => self.earth,
+            4 => self.moon,
+            else => self.mars,
+        };
     }
 
     /// Draw `tex` centred on `pos`, rotated by `rotation_deg` (0 = facing +x,
@@ -185,15 +205,15 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     const ship = world.ship;
     const speed = ship.vel.len();
     // Altitude above the surface of whichever body's SOI the ship is in;
-    // relative to Earth when coasting through gravity-free deep space.
+    // relative to the sun when coasting through gravity-free deep space.
     const soi_idx = world.dominantIndex(ship.pos);
-    const soi_name: [:0]const u8 = if (soi_idx) |i| (if (i == 0) "earth" else "moon") else "deep space";
+    const soi_name: [:0]const u8 = if (soi_idx) |i| cfg.names[i] else "deep space";
     const soi_body = world.planets[soi_idx orelse 0];
     const altitude = ship.pos.sub(soi_body.pos).len() - soi_body.radius;
 
     rl.drawFPS(10, 10);
 
-    const follow: [:0]const u8 = if (followed) |i| (if (i == 0) "earth" else "moon") else "ship";
+    const follow: [:0]const u8 = if (followed) |i| cfg.names[i] else "ship";
     const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}   altitude: {d:.0}   soi: {s}   theme: {s}   follow: {s}", .{ speed, altitude, soi_name, theme.label(), follow }) catch "";
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 

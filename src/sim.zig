@@ -103,17 +103,19 @@ pub const World = struct {
     planets: []const Planet,
     ship: Ship,
 
-    /// Index of the planet whose sphere of influence contains `point`:
-    /// the first moon (planets[1..]) whose SOI covers it, else the primary
-    /// if its own SOI does, else null — deep space, no gravity at all.
+    /// Index of the planet whose sphere of influence contains `point`.
+    /// SOIs nest (moon inside Earth's, planets inside the sun's), so of all
+    /// the bodies whose SOI covers the point the one with the *smallest* SOI
+    /// is the innermost — that body owns the point. Null means the point is
+    /// outside every SOI: deep space, no gravity at all.
     pub fn dominantIndex(self: World, point: Vec2) ?usize {
-        if (self.planets.len == 0) return null;
-        var i: usize = 1;
-        while (i < self.planets.len) : (i += 1) {
-            if (point.sub(self.planets[i].pos).len() < self.planets[i].soi) return i;
+        var best: ?usize = null;
+        for (self.planets, 0..) |p, i| {
+            if (point.sub(p.pos).len() < p.soi) {
+                if (best == null or p.soi < self.planets[best.?].soi) best = i;
+            }
         }
-        if (point.sub(self.planets[0].pos).len() < self.planets[0].soi) return 0;
-        return null;
+        return best;
     }
 
     /// Gravitational acceleration at `point` — arcade patched conics: only
@@ -140,10 +142,11 @@ pub const World = struct {
             const p = self.planets[idx];
             // Ride along with a moving SOI owner (see Planet.acc).
             acc = acc.add(p.acc);
-            // Capture assist — moons only: dragging inside the primary's SOI
-            // would decay every ordinary orbit. Applies only to ships that
-            // are bound to the moon (negative relative energy) in the outer
-            // SOI; fast hyperbolic flybys keep full slingshot behaviour.
+            // Capture assist — satellites only (planets[0] is the root body;
+            // dragging inside its SOI would decay every heliocentric orbit).
+            // Applies only to ships that are bound to the body (negative
+            // relative energy) in the outer SOI; fast hyperbolic flybys keep
+            // full slingshot behaviour.
             if (idx > 0) {
                 const dist = self.ship.pos.sub(p.pos).len();
                 if (dist > capture_zone * p.soi) {
@@ -247,6 +250,28 @@ test "spheres of influence partition gravity" {
     const far: Vec2 = .{ .x = 0, .y = 3000 };
     try testing.expectEqual(@as(?usize, null), world.dominantIndex(far));
     try testing.expectEqual(@as(f32, 0), world.gravityAt(far).len());
+}
+
+test "nested SOIs resolve to the innermost body regardless of order" {
+    // Sun ⊃ Earth ⊃ Moon, deliberately listed parent-first so the test
+    // fails if dominantIndex ever falls back to first-match ordering.
+    const world: World = .{
+        .planets = &.{
+            .{ .pos = .{}, .mass = 100000, .radius = 600, .soi = 26000 }, // sun
+            .{ .pos = .{ .x = 14500, .y = 0 }, .mass = 8000, .radius = 140, .soi = 2500 }, // earth
+            .{ .pos = .{ .x = 16000, .y = 0 }, .mass = 4000, .radius = 40, .soi = 770 }, // moon
+        },
+        .ship = .{ .pos = .{}, .vel = .{} },
+    };
+
+    // Near the moon all three SOIs contain the point; the moon's is smallest.
+    try testing.expectEqual(@as(?usize, 2), world.dominantIndex(.{ .x = 16100, .y = 0 }));
+    // Inside Earth's SOI but outside the moon's.
+    try testing.expectEqual(@as(?usize, 1), world.dominantIndex(.{ .x = 14000, .y = 0 }));
+    // Interplanetary space belongs to the sun.
+    try testing.expectEqual(@as(?usize, 0), world.dominantIndex(.{ .x = 7000, .y = 0 }));
+    // Beyond the sun's SOI: deep space.
+    try testing.expectEqual(@as(?usize, null), world.dominantIndex(.{ .x = 41000, .y = 0 }));
 }
 
 test "capture assist drags bound ships in the outer SOI but not flybys" {
