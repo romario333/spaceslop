@@ -66,6 +66,20 @@ const orbits = [_]?Orbit{
     .{ .parent = 0, .semi_major = 38500, .omega = 0.00015, .phase = 3.6, .ecc = 0.007, .peri = 1.61 }, // saturn
     .{ .parent = 0, .semi_major = 46500, .omega = 0.00011, .phase = 0.9, .ecc = 0.003, .peri = 2.98 }, // uranus
     .{ .parent = 0, .semi_major = 53500, .omega = 0.00009, .phase = 4.8, .ecc = 0.005, .peri = 0.79 }, // neptune
+    // Moons of Mars and Jupiter, compressed to fit their parent's SOI the same
+    // way the planets are compressed to fit the sun's. Shapes are realistic:
+    // eccentricities are the real ones (all of these moons ride nearly perfect
+    // circles), spacing keeps the real semi-major-axis ratios (Deimos at 2.5×
+    // Phobos, the Galileans at 1 : 1.59 : 2.54 : 4.46), and the mean motions
+    // follow Kepler's third law at the same ~10% arcade slowdown as the
+    // planets — which also preserves the Galileans' 4:2:1 Laplace resonance
+    // (Io laps Europa twice and Ganymede four times).
+    .{ .parent = 5, .semi_major = 440, .omega = 0.024, .phase = 1.7, .ecc = 0.015, .peri = 2.10 }, // phobos
+    .{ .parent = 5, .semi_major = 1100, .omega = 0.006, .phase = 3.9, .ecc = 0.0003, .peri = 0.50 }, // deimos
+    .{ .parent = 6, .semi_major = 930, .omega = 0.0208, .phase = 0.6, .ecc = 0.004, .peri = 4.60 }, // io
+    .{ .parent = 6, .semi_major = 1480, .omega = 0.0104, .phase = 2.8, .ecc = 0.009, .peri = 1.00 }, // europa
+    .{ .parent = 6, .semi_major = 2360, .omega = 0.0052, .phase = 5.1, .ecc = 0.001, .peri = 3.30 }, // ganymede
+    .{ .parent = 6, .semi_major = 4150, .omega = 0.0022, .phase = 1.9, .ecc = 0.007, .peri = 5.80 }, // callisto
 };
 
 comptime {
@@ -177,8 +191,8 @@ fn run(init: std.process.Init.Minimal) !void {
     // whose innermost sphere of influence contains the ship pulls on it, so
     // orbits around every body are clean stable ellipses. The whole system is
     // scripted kinematics — the sun sits at the origin, Mercury through
-    // Neptune ride Kepler ellipses around it, the moon around Earth (see
-    // `orbits`) — and each body's SOI
+    // Neptune ride Kepler ellipses around it, and the moons ride ellipses
+    // around Earth, Mars and Jupiter (see `orbits`) — and each body's SOI
     // travels with it. Bodies are small on screen but pull hard: deep wells
     // inside tight SOI bubbles, plus the sim's capture assist, mean a ship
     // that coasts in slowly settles into orbit on its own, while fast flybys

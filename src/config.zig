@@ -23,7 +23,7 @@ pub const PlanetConfig = struct {
 /// Display name of each body, in the canonical body order used everywhere a
 /// body is looked up by index: the planets array in main.zig, Config.planet,
 /// and render.SpriteSet.body all follow it.
-pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune" };
+pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "phobos", "deimos", "io", "europa", "ganymede", "callisto" };
 
 pub const Config = struct {
     // The sun's SOI must contain every heliocentric orbit (see `orbits` in
@@ -39,6 +39,15 @@ pub const Config = struct {
     saturn: PlanetConfig = .{ .mass = 22000, .radius = 250, .soi = 4200 },
     uranus: PlanetConfig = .{ .mass = 12000, .radius = 180, .soi = 3200 },
     neptune: PlanetConfig = .{ .mass = 13000, .radius = 175, .soi = 3200 },
+    // Moons. Small SOI bubbles so each moon's gravity stays a local affair
+    // inside its parent's SOI; cores larger than the rendered radius keep
+    // close flybys integrable, same trick as Earth's moon.
+    phobos: PlanetConfig = .{ .mass = 600, .radius = 16, .soi = 90, .core = 45 },
+    deimos: PlanetConfig = .{ .mass = 400, .radius = 12, .soi = 70, .core = 35 },
+    io: PlanetConfig = .{ .mass = 2600, .radius = 36, .soi = 170, .core = 100 },
+    europa: PlanetConfig = .{ .mass = 2400, .radius = 31, .soi = 150, .core = 90 },
+    ganymede: PlanetConfig = .{ .mass = 3600, .radius = 46, .soi = 200, .core = 110 },
+    callisto: PlanetConfig = .{ .mass = 3000, .radius = 42, .soi = 210, .core = 105 },
 
     pub fn planet(self: *Config, idx: usize) *PlanetConfig {
         return switch (idx) {
@@ -51,7 +60,13 @@ pub const Config = struct {
             6 => &self.jupiter,
             7 => &self.saturn,
             8 => &self.uranus,
-            else => &self.neptune,
+            9 => &self.neptune,
+            10 => &self.phobos,
+            11 => &self.deimos,
+            12 => &self.io,
+            13 => &self.europa,
+            14 => &self.ganymede,
+            else => &self.callisto,
         };
     }
 
