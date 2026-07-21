@@ -374,6 +374,167 @@ pub fn drawShip(ship: sim.Ship, sprites: ?*const SpriteSet) void {
     }
 }
 
+// Fragment shader for the flare front: procedural plasma inside the travelling
+// band — angular filaments that writhe over the flare's lifetime plus ripples
+// racing outward — instead of a solid shape. Fragment world position is
+// reconstructed from the quad's texcoords, so it works at any camera zoom.
+// Animated by the sim clock (u_age), so pause/step hold the picture still.
+const flare_fs_body =
+    \\uniform vec2 u_origin;
+    \\uniform vec2 u_quad_min;
+    \\uniform vec2 u_quad_size;
+    \\uniform float u_angle;
+    \\uniform float u_half;
+    \\uniform float u_inner;
+    \\uniform float u_outer;
+    \\uniform float u_age;
+    \\
+    \\float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    \\float vnoise(float x) {
+    \\    float i = floor(x);
+    \\    float f = fract(x);
+    \\    f = f * f * (3.0 - 2.0 * f);
+    \\    return mix(hash(i), hash(i + 1.0), f);
+    \\}
+    \\
+    \\vec4 flareColor(vec2 tc) {
+    \\    vec2 world = u_quad_min + tc * u_quad_size;
+    \\    vec2 d = world - u_origin;
+    \\    float r = length(d);
+    \\    float dth = atan(sin(atan(d.y, d.x) - u_angle), cos(atan(d.y, d.x) - u_angle));
+    \\    float an = abs(dth) / u_half;                    // 0 centre .. 1 wedge edge
+    \\    if (an > 1.0 || r < u_inner || r > u_outer) discard;
+    \\    float u = (r - u_inner) / (u_outer - u_inner);   // 0 trailing .. 1 leading
+    \\
+    \\    // Plasma filaments: two octaves of angular value noise drifting in
+    \\    // opposite directions so the streaks writhe rather than rotate; the
+    \\    // second octave shears with radius so filaments slant outward.
+    \\    float streak = 0.65 * vnoise(dth * 28.0 + u_age * 1.7)
+    \\                 + 0.35 * vnoise(dth * 71.0 + r * 0.0006 - u_age * 2.9);
+    \\    streak = pow(streak, 1.5);
+    \\
+    \\    // Energy ripples racing outward through the band, faster than the
+    \\    // front itself, skewed by angle so they read as bursts, not rings.
+    \\    float ripple = 0.65 + 0.35 * sin(r * 0.012 - u_age * 14.0 + dth * 6.0);
+    \\
+    \\    float edge = smoothstep(1.0, 0.55, an);          // soften wedge edges
+    \\    float tail = smoothstep(0.0, 0.45, u);           // fade in from the back
+    \\    float lead = 0.9 * pow(smoothstep(0.6, 1.0, u), 1.4); // brighter crest
+    \\
+    \\    float body = 0.55 * ripple * (0.25 + 0.75 * streak);
+    \\    float glow = clamp(edge * tail * (body + lead * (0.6 + 0.8 * streak)) * 1.8, 0.0, 1.0);
+    \\    vec3 col = mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.95, 0.7), clamp(0.5 * streak + lead, 0.0, 1.0));
+    \\    return vec4(col, glow);
+    \\}
+    \\
+;
+
+const flare_fs = if (is_web)
+    "#version 100\nprecision highp float;\nvarying vec2 fragTexCoord;\n" ++ flare_fs_body ++
+        "void main() { gl_FragColor = flareColor(fragTexCoord); }\n"
+else
+    "#version 330\nin vec2 fragTexCoord;\nout vec4 finalColor;\n" ++ flare_fs_body ++
+        "void main() { finalColor = flareColor(fragTexCoord); }\n";
+
+/// GPU state for the flare front: the plasma shader plus a 1×1 white texture
+/// (drawTexturePro maps its texcoords 0..1 across the quad, which the shader
+/// turns back into world coordinates — the shapes texture can't do that).
+pub const FlareFx = struct {
+    shader: rl.Shader,
+    white: rl.Texture2D,
+    loc_origin: i32,
+    loc_quad_min: i32,
+    loc_quad_size: i32,
+    loc_angle: i32,
+    loc_half: i32,
+    loc_inner: i32,
+    loc_outer: i32,
+    loc_age: i32,
+
+    pub fn init() !FlareFx {
+        const shader = try rl.loadShaderFromMemory(null, flare_fs);
+        const img = rl.genImageColor(1, 1, rl.Color.white);
+        defer rl.unloadImage(img);
+        return .{
+            .shader = shader,
+            .white = try rl.loadTextureFromImage(img),
+            .loc_origin = rl.getShaderLocation(shader, "u_origin"),
+            .loc_quad_min = rl.getShaderLocation(shader, "u_quad_min"),
+            .loc_quad_size = rl.getShaderLocation(shader, "u_quad_size"),
+            .loc_angle = rl.getShaderLocation(shader, "u_angle"),
+            .loc_half = rl.getShaderLocation(shader, "u_half"),
+            .loc_inner = rl.getShaderLocation(shader, "u_inner"),
+            .loc_outer = rl.getShaderLocation(shader, "u_outer"),
+            .loc_age = rl.getShaderLocation(shader, "u_age"),
+        };
+    }
+
+    pub fn unload(self: FlareFx) void {
+        rl.unloadShader(self.shader);
+        rl.unloadTexture(self.white);
+    }
+};
+
+/// Solar flare: a faint telegraph wedge over the whole affected sector with
+/// hairline edges (visible from eruption onward, so the pilot knows where is
+/// unsafe), plus — once the warning ends — the plasma front travelling outward.
+/// Like the exhaust flame, it belongs to the physics, so every theme draws it.
+pub fn drawFlare(flare: sim.Flare, sun_radius: f32, fx: *const FlareFx) void {
+    const rad_to_deg = 180.0 / std.math.pi;
+    const a0 = (flare.angle - sim.Flare.half_angle) * rad_to_deg;
+    const a1 = (flare.angle + sim.Flare.half_angle) * rad_to_deg;
+    const tint: rl.Color = .{ .r = 255, .g = 210, .b = 110, .a = 255 }; // sun tint
+    // Flicker off the sim clock, not wall time, so pause/step frames hold still.
+    const pulse = 0.75 + 0.25 * @sin(flare.age * 9.0);
+
+    // Telegraph wedge — pulses bright during the warning, then drops to a
+    // faint reminder while the front is in flight.
+    const wedge_alpha: u8 = if (flare.warning()) @intFromFloat(30.0 * pulse) else 14;
+    rl.drawRing(v(flare.origin), sun_radius, sim.Flare.max_range, a0, a1, 64, .{ .r = tint.r, .g = tint.g, .b = tint.b, .a = wedge_alpha });
+    for ([_]f32{ -1, 1 }) |s| {
+        const dir = Vec2.fromAngle(flare.angle + s * sim.Flare.half_angle);
+        rl.drawLineEx(
+            v(flare.origin.add(dir.scale(sun_radius))),
+            v(flare.origin.add(dir.scale(sim.Flare.max_range))),
+            2.0,
+            .{ .r = tint.r, .g = tint.g, .b = tint.b, .a = 70 },
+        );
+    }
+
+    // The travelling band — the only part that damages — as shader plasma on
+    // a quad covering the front, blended additively so it reads as energy.
+    if (!flare.warning()) {
+        const outer = flare.frontOuter();
+        const quad_min: [2]f32 = .{ flare.origin.x - outer, flare.origin.y - outer };
+        const quad_size: [2]f32 = .{ outer * 2.0, outer * 2.0 };
+        const origin: [2]f32 = .{ flare.origin.x, flare.origin.y };
+        const uniforms = [_]struct { loc: i32, val: f32 }{
+            .{ .loc = fx.loc_angle, .val = flare.angle },
+            .{ .loc = fx.loc_half, .val = sim.Flare.half_angle },
+            .{ .loc = fx.loc_inner, .val = flare.frontInner() },
+            .{ .loc = fx.loc_outer, .val = outer },
+            .{ .loc = fx.loc_age, .val = flare.age },
+        };
+        rl.setShaderValue(fx.shader, fx.loc_origin, &origin, .vec2);
+        rl.setShaderValue(fx.shader, fx.loc_quad_min, &quad_min, .vec2);
+        rl.setShaderValue(fx.shader, fx.loc_quad_size, &quad_size, .vec2);
+        for (uniforms) |u| rl.setShaderValue(fx.shader, u.loc, &u.val, .float);
+
+        rl.beginShaderMode(fx.shader);
+        rl.beginBlendMode(.additive);
+        rl.drawTexturePro(
+            fx.white,
+            .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .{ .x = quad_min[0], .y = quad_min[1], .width = quad_size[0], .height = quad_size[1] },
+            .{ .x = 0, .y = 0 },
+            0,
+            rl.Color.white,
+        );
+        rl.endBlendMode();
+        rl.endShaderMode();
+    }
+}
+
 /// Flat-shape ISS for the classic theme: solar panels, truss, centre module.
 /// Footprint roughly matches the sprite versions' world size.
 pub fn drawIssClassic(pos: Vec2, rotation_deg: f32) void {
@@ -525,13 +686,13 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     rl.drawFPS(10, 10);
 
     const follow: [:0]const u8 = if (followed) |i| cfg.names[i] else "ship";
-    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}   altitude: {d:.0}   soi: {s}   theme: {s}   follow: {s}", .{ speed, altitude, soi_name, theme.label(), follow }) catch "";
+    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "hull: {d:.0}   speed: {d:.1}   altitude: {d:.0}   soi: {s}   theme: {s}   follow: {s}", .{ ship.health, speed, altitude, soi_name, theme.label(), follow }) catch "";
     rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
 
     const controls = if (is_web)
-        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   click a planet: details + follow it"
+        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   click a planet: details + follow it"
     else
-        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   F: fullscreen   click a planet: details + follow it";
+        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   F: fullscreen   click a planet: details + follow it";
     rl.drawText(
         controls,
         10,

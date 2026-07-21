@@ -103,6 +103,61 @@ pub const Ship = struct {
     /// Retro thrusters firing: the pair of small nose thrusters that push
     /// the ship backwards along its heading.
     braking: bool = false,
+    /// Hull integrity, 0–100. Damaged by hazards (solar flares); clamped at
+    /// zero — no destruction mechanic yet.
+    health: f32 = 100,
+};
+
+/// A solar flare: erupts from the sun in one direction, telegraphs a wedge
+/// during a warning phase, then a hot band travels outward through the wedge.
+/// Only the moving band damages the ship, so a warned pilot can dodge it.
+pub const Flare = struct {
+    /// Telegraph phase: the wedge is visible but harmless, giving the pilot
+    /// time to burn out of the zone before the front launches.
+    pub const warning_duration: f32 = 2.5;
+    /// Angular half-width of the wedge, radians (~17°) — ~8600 px wide at
+    /// Earth orbit, dodgeable but not trivially so.
+    pub const half_angle: f32 = 0.30;
+    /// Outward speed of the hot front, px/s — reaches Earth orbit ~5.8 s
+    /// after the warning ends, slow enough to watch it cross the system.
+    pub const front_speed: f32 = 2500;
+    /// Radial thickness of the damaging band, px.
+    pub const thickness: f32 = 2500;
+    /// The flare dies at the sun's SOI edge; beyond is deep space.
+    pub const max_range: f32 = 26000;
+    /// Hull lost per second inside the band; a full stationary pass lasts
+    /// thickness/front_speed = 1 s, so it costs ~17 hull.
+    pub const damage_per_sec: f32 = 17;
+
+    origin: Vec2,
+    /// Direction of travel in radians (same convention as Vec2.fromAngle).
+    angle: f32,
+    age: f32 = 0,
+
+    pub fn warning(self: Flare) bool {
+        return self.age < warning_duration;
+    }
+    /// Leading edge of the hot band, distance from origin.
+    pub fn frontOuter(self: Flare) f32 {
+        return @max(0, self.age - warning_duration) * front_speed;
+    }
+    /// Trailing edge of the hot band.
+    pub fn frontInner(self: Flare) f32 {
+        return @max(0, self.frontOuter() - thickness);
+    }
+    pub fn expired(self: Flare) bool {
+        return self.frontInner() > max_range;
+    }
+    /// Is `p` inside the damaging band right now?
+    pub fn contains(self: Flare, p: Vec2) bool {
+        const d = p.sub(self.origin);
+        const dist = d.len();
+        if (dist < self.frontInner() or dist > self.frontOuter()) return false;
+        const delta = std.math.atan2(d.y, d.x) - self.angle;
+        // Wrap to (-pi, pi] without branching so the ±pi seam just works.
+        const wrapped = std.math.atan2(@sin(delta), @cos(delta));
+        return @abs(wrapped) <= half_angle;
+    }
 };
 
 /// Per-frame control input, produced by the renderer/input layer.
@@ -134,6 +189,15 @@ pub const World = struct {
 
     planets: []const Planet,
     ship: Ship,
+    /// At most one flare at a time; null when the sun is quiet.
+    flare: ?Flare = null,
+
+    /// Erupt a flare from the root body (planets[0], the sun) toward `angle`.
+    /// The caller picks the angle so the sim stays free of randomness.
+    pub fn triggerFlare(self: *World, angle: f32) void {
+        const origin = if (self.planets.len > 0) self.planets[0].pos else Vec2{};
+        self.flare = .{ .origin = origin, .angle = angle };
+    }
 
     /// Index of the planet whose sphere of influence contains `point`.
     /// SOIs nest (moon inside Earth's, planets inside the sun's), so of all
@@ -215,6 +279,15 @@ pub const World = struct {
 
         self.ship.vel = self.ship.vel.add(acc.scale(dt)); // velocity first...
         self.ship.pos = self.ship.pos.add(self.ship.vel.scale(dt)); // ...then position
+
+        if (self.flare) |*fl| {
+            fl.age += dt;
+            if (fl.expired()) {
+                self.flare = null;
+            } else if (!fl.warning() and fl.contains(self.ship.pos)) {
+                self.ship.health = @max(0, self.ship.health - Flare.damage_per_sec * dt);
+            }
+        }
     }
 
     /// Speed needed for a circular orbit at `radius` around a planet of `mass`.
@@ -426,4 +499,61 @@ test "brake pushes opposite the heading with the same power" {
     var both: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{}, .angle = 0 } };
     both.step(0.1, .{ .thrust = true, .brake = true });
     try testing.expectEqual(@as(f32, 0), both.ship.vel.len());
+}
+
+/// Step `world` for `seconds` of sim time in 0.01 s increments.
+fn stepFor(world: *World, seconds: f32) void {
+    const dt: f32 = 0.01;
+    var t: f32 = 0;
+    while (t < seconds) : (t += dt) world.step(dt, .{});
+}
+
+test "flare warning phase deals no damage" {
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = .{ .x = 1000, .y = 0 }, .vel = .{} } };
+    world.triggerFlare(0);
+    stepFor(&world, 1.0);
+    try testing.expectEqual(@as(f32, 100), world.ship.health);
+    try testing.expect(world.flare != null);
+    try testing.expect(world.flare.?.warning());
+}
+
+test "flare front damages the ship as it passes" {
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = .{ .x = 1000, .y = 0 }, .vel = .{} } };
+    world.triggerFlare(0);
+    // Step past the band's full transit of x=1000 (trailing edge clears it at
+    // age = warning + (1000 + thickness) / front_speed = 3.9 s).
+    stepFor(&world, 4.0);
+    // Exposure is the time the band covers the ship: thickness / front_speed.
+    const expected = 100.0 - Flare.damage_per_sec * (Flare.thickness / Flare.front_speed);
+    try testing.expectApproxEqRel(expected, world.ship.health, 2e-2);
+    // The front has moved on — no further damage.
+    const after_pass = world.ship.health;
+    stepFor(&world, 1.0);
+    try testing.expectEqual(after_pass, world.ship.health);
+}
+
+test "ship outside the wedge is untouched and the flare expires" {
+    // Bearing pi/2 from the origin, flare aimed along +x: well outside 0.30 rad.
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = .{ .x = 0, .y = 1000 }, .vel = .{} } };
+    world.triggerFlare(0);
+    stepFor(&world, 14.0);
+    try testing.expectEqual(@as(f32, 100), world.ship.health);
+    try testing.expectEqual(@as(?Flare, null), world.flare);
+}
+
+test "flare hit test wraps across the pi seam" {
+    // Flare at pi-0.1, ship bearing -pi+0.1: naive delta is ~2pi-0.2, but the
+    // true angular distance is 0.2 < half_angle, so the ship must be hit.
+    const pos = Vec2.fromAngle(-std.math.pi + 0.1).scale(1000);
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = pos, .vel = .{} } };
+    world.triggerFlare(std.math.pi - 0.1);
+    stepFor(&world, 4.0);
+    try testing.expect(world.ship.health < 100);
+}
+
+test "flare damage clamps health at zero" {
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = .{ .x = 1000, .y = 0 }, .vel = .{}, .health = 5 } };
+    world.triggerFlare(0);
+    stepFor(&world, 4.0);
+    try testing.expectEqual(@as(f32, 0), world.ship.health);
 }

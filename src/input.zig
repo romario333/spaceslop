@@ -44,6 +44,7 @@ pub const Frame = struct {
     fullscreen: bool = false,
     cycle_theme: bool = false,
     toggle_soi: bool = false,
+    flare: bool = false,
     wheel: rl.Vector2 = .{ .x = 0, .y = 0 },
     zoom_modifier: bool = false,
     mouse: Mouse = .{},
@@ -97,6 +98,7 @@ var syn_reset = false;
 var syn_fullscreen = false;
 var syn_theme = false;
 var syn_soi = false;
+var syn_flare = false;
 var syn_wheel: rl.Vector2 = .{ .x = 0, .y = 0 };
 var syn_zoom: f32 = 0;
 var clicks: [8]Click = undefined;
@@ -116,6 +118,7 @@ pub fn sample(advancing: bool) Frame {
         .fullscreen = rl.isKeyPressed(.f),
         .cycle_theme = rl.isKeyPressed(.t),
         .toggle_soi = rl.isKeyPressed(.o),
+        .flare = rl.isKeyPressed(.x),
         .wheel = rl.getMouseWheelMoveV(),
         .zoom_modifier = rl.isKeyDown(.left_super) or rl.isKeyDown(.right_super),
         .mouse = .{
@@ -164,6 +167,10 @@ pub fn sample(advancing: bool) Frame {
     if (syn_soi) {
         syn_soi = false;
         f.toggle_soi = true;
+    }
+    if (syn_flare) {
+        syn_flare = false;
+        f.flare = true;
     }
     if (syn_wheel.x != 0 or syn_wheel.y != 0) {
         f.wheel.x += syn_wheel.x;
@@ -231,6 +238,8 @@ pub fn injectKey(name: []const u8, frames: u32) bool {
         syn_theme = true;
     } else if (eq(name, "o")) {
         syn_soi = true;
+    } else if (eq(name, "x") or eq(name, "flare")) {
+        syn_flare = true;
     } else {
         return false;
     }
