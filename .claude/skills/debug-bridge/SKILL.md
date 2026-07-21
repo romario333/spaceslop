@@ -1,6 +1,6 @@
 ---
 name: debug-bridge
-description: Run and drive the game programmatically via its debug bridge — launch it, dump sim state as JSON, inject clicks/keys, pause and single-step physics deterministically, take screenshots. Use whenever you need to see or poke the running game - verifying a gameplay/rendering/camera/input change, reproducing an input bug, or capturing a screenshot. Not needed for pure sim-logic changes (extend `zig build test` tests in sim.zig instead).
+description: Run and drive the game programmatically via its debug bridge — launch it, dump sim state as JSON, inject clicks/keys, pause and single-step physics deterministically, fast-forward sim time (`run`/`warp`), take screenshots. Use whenever you need to see or poke the running game - verifying a gameplay/rendering/camera/input change, reproducing an input bug, or capturing a screenshot. Not needed for pure sim-logic changes (extend `zig build test` tests in sim.zig instead).
 ---
 
 # Driving the game via the debug bridge
@@ -92,6 +92,8 @@ commands are consumed one per rendered frame.
 | `zoom <dy>` | one frame of cmd+scroll (zooms) |
 | `pause` / `resume` | freeze/unfreeze physics; rendering and the bridge keep running |
 | `step [n]` | while paused, advance exactly n fixed steps, one per rendered frame |
+| `run <n>` | fast-forward: execute n fixed steps synchronously inside the next frame, paused or not (cap 1M/command). The whole batch sees that one frame's input — use `step` for input-exact sequences |
+| `warp <x>` | scale sim speed while running: real time × x feeds the physics accumulator (0.01–100). `warp 1` restores normal speed; useful for *watching* things evolve, where `run` jumps instantly |
 | `help` | list commands |
 
 ## Deterministic repro recipe
@@ -101,6 +103,15 @@ sequences are exact: `pause` → `key thrust 3` → `step 3` is precisely three
 thrusting steps. For selection/tap bugs: `pause` → `clickw <x> <y> 0` →
 `step 1` → diff `state` before/after. `step` in `state` is the determinism
 clock — same commands from a fresh launch replay identically.
+
+## Fast-forwarding sim time
+
+Physics runs at 120 Hz, so `run 7200` jumps one sim-minute in a single frame
+(deterministic — dt is fixed). To reach a state minutes ahead (orbit
+evolution, SOI transitions, long trails), `run` there and then `state` /
+`screenshot`; don't wait in real time or drain `step` at one step per frame.
+The reply is sent before the batch executes, so sleep ~0.2 s (one frame)
+before reading `state`.
 
 ## Web build (when native won't do)
 
