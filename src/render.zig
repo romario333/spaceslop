@@ -213,6 +213,157 @@ pub const Starfield = struct {
     }
 };
 
+/// Visual layer of the asteroid belt. The rocks' kinematics — positions,
+/// drift, wobble, sizes — live in sim.Belt, because they are the colliders
+/// the ship actually hits; what you see is exactly what hurts. This struct
+/// holds only the cosmetics, index-aligned with the sim's rock array: tumble
+/// rate, tint, and a per-rock lumpy outline (radius-jittered vertices, drawn
+/// as a triangle fan) so no two rocks are the same shape. Rock sizes are
+/// floored in *screen* px, the starfield's trick: zoomed out the swarm
+/// collapses into a speckled dust ring, and a faint annulus underlay keeps
+/// the hazard band legible at any zoom.
+pub const AsteroidBelt = struct {
+    /// Screen-px floor for a rock (slightly under the stars' 1.5, so the
+    /// belt speckle reads as a band without outshining the starfield).
+    const min_px: f32 = 1.4;
+    /// Culling margin: the largest rock radius times the largest vertex
+    /// jitter, in world px.
+    const margin: f32 = 26.0;
+    const max_verts = 10;
+
+    const Visual = struct {
+        /// Tumble rate, rad/s (signed — some spin retrograde).
+        spin: f32,
+        nverts: u8,
+        color: rl.Color,
+        shadow: rl.Color,
+        /// Unit outline: vertices around the origin at radius ~0.62–1.30,
+        /// scaled by the sim rock's size at draw time.
+        verts: [max_verts]Vec2,
+    };
+
+    visuals: [sim.Belt.rock_count]Visual = undefined,
+
+    pub fn init(self: *AsteroidBelt, seed: u64) void {
+        var prng = std.Random.DefaultPrng.init(seed);
+        const rng = prng.random();
+        for (&self.visuals) |*vis| {
+            const shade = 90.0 + rng.float(f32) * 75.0;
+            vis.* = .{
+                .spin = (rng.float(f32) - 0.5) * 2.4,
+                .nverts = 7 + rng.uintLessThan(u8, 4),
+                .color = .{
+                    .r = @intFromFloat(shade + 30),
+                    .g = @intFromFloat(shade + 8),
+                    .b = @intFromFloat(shade - 12),
+                    .a = 255,
+                },
+                .shadow = .{
+                    .r = @intFromFloat((shade + 30) * 0.55),
+                    .g = @intFromFloat((shade + 8) * 0.55),
+                    .b = @intFromFloat((shade - 12) * 0.55),
+                    .a = 255,
+                },
+                .verts = undefined,
+            };
+            // Irregular outline: evenly spread vertices, each nudged along
+            // the ring (±¼ step keeps them sorted, so the polygon stays
+            // simple) and jittered in radius. Star-convex from the origin,
+            // which is all the triangle fan needs. Decreasing angle, because
+            // raylib's y-down 2D winding culls the other direction.
+            const n: f32 = @floatFromInt(vis.nverts);
+            for (vis.verts[0..vis.nverts], 0..) |*vert, k| {
+                const step = std.math.tau / n;
+                const ang = step * @as(f32, @floatFromInt(k)) + (rng.float(f32) - 0.5) * step * 0.5;
+                vert.* = Vec2.fromAngle(-ang).scale(0.62 + rng.float(f32) * 0.68);
+            }
+        }
+    }
+
+    pub fn draw(self: *const AsteroidBelt, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
+        // Dusty annulus underlay: marks the hazard band at every zoom and
+        // gives the speckle something to sit on. Stacked concentric rings,
+        // each pulled in from both edges, so the accumulated alpha steps up
+        // toward mid-belt roughly like the sim's density bump — no hard rim
+        // where dust meets space.
+        const dust: rl.Color = .{ .r = 170, .g = 145, .b = 115, .a = 6 };
+        const width = sim.Belt.outer - sim.Belt.inner;
+        var layer: f32 = 0;
+        while (layer < 4) : (layer += 1) {
+            const inset = width * layer / 9.0;
+            rl.drawRing(v(center), sim.Belt.inner + inset, sim.Belt.outer - inset, 0, 360, 360, dust);
+        }
+
+        const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+        const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+        const left = cam.target.x - view_w / 2.0 - margin;
+        const right = cam.target.x + view_w / 2.0 + margin;
+        const top = cam.target.y - view_h / 2.0 - margin;
+        const bottom = cam.target.y + view_h / 2.0 + margin;
+
+        std.debug.assert(belt.rocks.len <= self.visuals.len);
+        const px = min_px / cam.zoom;
+        for (belt.rocks, 0..) |rock, i| {
+            const pos = sim.Belt.rockState(rock, center, belt.time).pos;
+            if (pos.x < left or pos.x > right or pos.y < top or pos.y > bottom) continue;
+            const vis = &self.visuals[i];
+            if (rock.size <= px) {
+                // Sub-pixel at this zoom: a flat rect, same as the starfield.
+                rl.drawRectangleV(.{ .x = pos.x - px / 2.0, .y = pos.y - px / 2.0 }, .{ .x = px, .y = px }, vis.color);
+                continue;
+            }
+            // Tumble the unit outline and scale it up to the rock's size.
+            const spin_ang = rock.wob_phase + vis.spin * belt.time;
+            const c = @cos(spin_ang);
+            const s = @sin(spin_ang);
+            var world_verts: [max_verts]Vec2 = undefined;
+            for (vis.verts[0..vis.nverts], world_verts[0..vis.nverts]) |vert, *w| {
+                w.* = .{
+                    .x = (c * vert.x - s * vert.y) * rock.size,
+                    .y = (s * vert.x + c * vert.y) * rock.size,
+                };
+            }
+            // Fan from the centroid: [centre, v0..vn, v0] closes the loop.
+            var pts: [max_verts + 2]rl.Vector2 = undefined;
+            pts[0] = v(pos);
+            for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(pos.add(w));
+            pts[vis.nverts + 1] = pts[1];
+            rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.color);
+            // Fake lighting: the same outline at 0.5 scale, pushed away from
+            // the sun by 0.28·size — stays inside the 0.62 minimum vertex
+            // radius, so the shadow never pokes out of the silhouette.
+            const away = pos.sub(center).normalized().scale(rock.size * 0.28);
+            const spos = pos.add(away);
+            pts[0] = v(spos);
+            for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(spos.add(w.scale(0.5)));
+            pts[vis.nverts + 1] = pts[1];
+            rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.shadow);
+        }
+    }
+};
+
+/// Cheap deterministic 0..1 hash, the shader's fract(sin(n)·43758…) trick.
+fn hash(n: f32) f32 {
+    const x = @sin(n) * 43758.5453;
+    return x - @floor(x);
+}
+
+/// Impact sparks just after a rock strike (keyed off ship.hit_timer): hot
+/// flecks jittering around the ship, re-rolled a few times a second off the
+/// sim clock so pause/step hold the picture still. Like the exhaust flame,
+/// this belongs to the physics and draws in every theme.
+pub fn drawBeltImpacts(ship_pos: Vec2, time: f32) void {
+    const slot = @floor(time * 8.0);
+    var i: f32 = 0;
+    while (i < 4) : (i += 1) {
+        const a = hash(slot * 17.31 + i * 7.97) * std.math.tau;
+        const d = 12.0 + 20.0 * hash(slot * 5.13 + i * 3.71);
+        const p = ship_pos.add(Vec2.fromAngle(a).scale(d));
+        const s = 1.5 + 2.5 * hash(slot * 9.77 + i * 11.3);
+        rl.drawCircleV(v(p), s, .{ .r = 255, .g = 190, .b = 90, .a = 230 });
+    }
+}
+
 /// Faint line tracing a body's scripted Kepler ellipse (see `orbits` in
 /// main.zig): semi-major axis `a`, eccentricity `e`, periapsis direction
 /// `peri`, with the parent's current position at `focus`. Drawn under
@@ -729,8 +880,15 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
 
     // Each column formats into the shared buffer and is drawn before the
     // next one reuses it.
+    // Hull turns red while a hazard is actively damaging the ship — rock
+    // strikes have no telegraph, so the readout is the "you got hit" cue.
+    const in_flare = if (world.flare) |fl| !fl.warning() and fl.contains(ship.pos) else false;
+    const hull_color: rl.Color = if (ship.hit_timer > 0 or in_flare)
+        .{ .r = 255, .g = 90, .b = 80, .a = 255 }
+    else
+        hud_color;
     const hull_txt = std.fmt.bufPrintZ(&hud_buf, "hull: {d:.0}", .{ship.health}) catch "";
-    hudColumn(&x, hull_txt, "hull: 100", hud_color);
+    hudColumn(&x, hull_txt, "hull: 100", hull_color);
 
     const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}", .{speed}) catch "";
     hudColumn(&x, speed_txt, "speed: 99999.9", hud_color);

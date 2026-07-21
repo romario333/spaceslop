@@ -24,6 +24,11 @@ const is_web = builtin.target.os.tag == .emscripten;
 const screen_w = 1000;
 const screen_h = 700;
 
+// Belt rock arrays — file scope, not run()'s stack: ~130 KB of colliders
+// plus ~450 KB of outlines would be a big bite out of the wasm stack.
+var belt_rocks: [sim.Belt.rock_count]sim.Belt.Rock = undefined;
+var belt_visuals: render.AsteroidBelt = undefined;
+
 /// Index of Earth in the canonical body order (see cfg.names); the ship
 /// spawns there and the ISS orbits it.
 const earth_idx = 3;
@@ -211,9 +216,16 @@ fn run(init: std.process.Init.Minimal) !void {
     for (orbits, 0..) |o, i| angles[i] = if (o) |orb| orb.phase else 0;
     updateOrbits(&planets, &angles, 0); // place every body before the first frame
 
+    // The belt's rocks are real colliders in the sim; the render layer rolls
+    // its cosmetic attributes (shape, tint, tumble) from a separate stream,
+    // index-aligned with the same array.
+    sim.Belt.fillRocks(&belt_rocks, 0xA57E_401D);
+    belt_visuals.init(0x0C_407E5);
+
     var world: sim.World = .{
         .planets = &planets,
         .ship = shipStart(planets[earth_idx]),
+        .belt = .{ .rocks = &belt_rocks },
     };
 
     // Decorative ISS on a low circular orbit around the primary planet. It
@@ -397,6 +409,10 @@ fn run(init: std.process.Init.Minimal) !void {
 
             trail.draw(&planets);
 
+            // Under the planets: a rock passing behind Jupiter should occlude
+            // like the background object it is.
+            if (world.belt) |*b| belt_visuals.draw(b, planets[0].pos, cam);
+
             const sprites: ?*const SpriteSet = switch (theme) {
                 .pixelart => &sprite_sets[0],
                 .scifi_60s => &sprite_sets[1],
@@ -435,6 +451,10 @@ fn run(init: std.process.Init.Minimal) !void {
             if (sprites) |s| s.drawSprite(s.iss, iss_pos, iss_deg, 1.0) else render.drawIssClassic(iss_pos, iss_deg);
 
             render.drawShip(world.ship, sprites);
+            // Sparks for a moment after each rock strike (see Ship.hit_timer).
+            if (world.ship.hit_timer > 0) {
+                render.drawBeltImpacts(world.ship.pos, world.belt.?.time);
+            }
             detail.drawSelection(&planets);
 
             // Velocity vector (green) for orbital intuition.
