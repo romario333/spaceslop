@@ -172,6 +172,9 @@ fn run(init: std.process.Init.Minimal) !void {
     };
     defer for (sprite_sets) |s| s.unload();
 
+    const flare_fx = try render.FlareFx.init();
+    defer flare_fx.unload();
+
     // --- World setup -------------------------------------------------------
     // Gravity uses arcade patched conics (see sim.gravityAt): only the body
     // whose innermost sphere of influence contains the ship pulls on it, so
@@ -224,6 +227,11 @@ fn run(init: std.process.Init.Minimal) !void {
     // look around. Selecting a planet carries the offset over so the view
     // doesn't jump; deselecting or R zeroes it, snapping back to the ship.
     var pan_offset: Vec2 = .{};
+    // Flare directions come from a fixed-seed stream: the sim stays RNG-free
+    // (the rolled angle is passed into triggerFlare), the web build needs no
+    // entropy source, and debug-bridge runs are reproducible — the first press
+    // always fires the same way, while successive presses still vary.
+    var flare_prng = std.Random.DefaultPrng.init(0xF1A2E);
 
     var cam: rl.Camera2D = .{
         .target = v(world.ship.pos),
@@ -286,6 +294,10 @@ fn run(init: std.process.Init.Minimal) !void {
         if (!is_web and in.fullscreen) rl.toggleFullscreen();
         if (in.cycle_theme) theme = theme.next();
         if (in.toggle_soi) show_soi = !show_soi;
+        // One flare at a time; the key is ignored while one is in flight.
+        if (in.flare and world.flare == null) {
+            world.triggerFlare(flare_prng.random().float(f32) * std.math.tau);
+        }
 
         // Two-finger scroll pans the view; hold cmd (super) to zoom instead.
         // Keep the camera centred on the current window size.
@@ -398,6 +410,8 @@ fn run(init: std.process.Init.Minimal) !void {
                     rl.drawCircleLinesV(v(p.pos), p.radius, .{ .r = 150, .g = 190, .b = 230, .a = 255 });
                 }
             }
+
+            if (world.flare) |fl| render.drawFlare(fl, planets[0].radius, &flare_fx);
 
             // ISS orbits Earth with its truss tangent to the orbit.
             const iss_pos = planets[earth_idx].pos.add(Vec2.fromAngle(iss_angle).scale(iss_orbit_r));

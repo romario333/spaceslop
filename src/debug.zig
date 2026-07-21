@@ -257,7 +257,7 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
             return .done;
         };
         if (!input.injectKey(name, frames)) {
-            try w.writeAll("err unknown key (w/a/s/d/up/down/left/right/thrust/brake/r/t/o/f)");
+            try w.writeAll("err unknown key (w/a/s/d/up/down/left/right/thrust/brake/r/t/o/f/x/flare)");
             return .done;
         }
         try w.print("ok key {s} frames {d}", .{ name, frames });
@@ -327,13 +327,19 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
     try writeVec(w, ship.pos);
     try w.writeAll(",\"vel\":");
     try writeVec(w, ship.vel);
-    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"thrusting\":{},\"braking\":{}}}", .{ ship.vel.len(), ship.angle, ship.thrusting, ship.braking });
+    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"thrusting\":{},\"braking\":{},\"health\":{d:.1}}}", .{ ship.vel.len(), ship.angle, ship.thrusting, ship.braking, ship.health });
 
     const soi_idx = h.world.dominantIndex(ship.pos);
     if (soi_idx) |i| {
         try w.print(",\"soi\":{d}", .{i});
     } else {
         try w.writeAll(",\"soi\":null");
+    }
+
+    if (h.world.flare) |fl| {
+        try w.print(",\"flare\":{{\"angle\":{d:.4},\"age\":{d:.2},\"warning\":{},\"front\":[{d:.1},{d:.1}]}}", .{ fl.angle, fl.age, fl.warning(), fl.frontInner(), fl.frontOuter() });
+    } else {
+        try w.writeAll(",\"flare\":null");
     }
 
     try w.writeAll(",\"planets\":[");
