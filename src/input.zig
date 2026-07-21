@@ -41,6 +41,8 @@ pub const Frame = struct {
     thrust: bool = false,
     brake: bool = false,
     reset: bool = false,
+    /// Debug: refill the fuel tank (G).
+    refuel: bool = false,
     fullscreen: bool = false,
     cycle_theme: bool = false,
     toggle_soi: bool = false,
@@ -95,6 +97,7 @@ var syn_right: u32 = 0;
 var syn_thrust: u32 = 0;
 var syn_brake: u32 = 0;
 var syn_reset = false;
+var syn_refuel = false;
 var syn_fullscreen = false;
 var syn_theme = false;
 var syn_soi = false;
@@ -115,6 +118,7 @@ pub fn sample(advancing: bool) Frame {
         .thrust = rl.isKeyDown(.w) or rl.isKeyDown(.up),
         .brake = rl.isKeyDown(.s) or rl.isKeyDown(.down),
         .reset = rl.isKeyPressed(.r),
+        .refuel = rl.isKeyPressed(.g),
         .fullscreen = rl.isKeyPressed(.f),
         .cycle_theme = rl.isKeyPressed(.t),
         .toggle_soi = rl.isKeyPressed(.o),
@@ -155,6 +159,10 @@ pub fn sample(advancing: bool) Frame {
     if (syn_reset) {
         syn_reset = false;
         f.reset = true;
+    }
+    if (syn_refuel) {
+        syn_refuel = false;
+        f.refuel = true;
     }
     if (syn_fullscreen) {
         syn_fullscreen = false;
@@ -232,6 +240,8 @@ pub fn injectKey(name: []const u8, frames: u32) bool {
         syn_brake = frames;
     } else if (eq(name, "r")) {
         syn_reset = true;
+    } else if (eq(name, "g") or eq(name, "refuel")) {
+        syn_refuel = true;
     } else if (eq(name, "f")) {
         syn_fullscreen = true;
     } else if (eq(name, "t")) {
