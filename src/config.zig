@@ -27,27 +27,43 @@ pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "
 
 pub const Config = struct {
     // The sun's SOI must contain every heliocentric orbit (see `orbits` in
-    // main.zig): Neptune tops out near 57000, so 60000 keeps the whole system
-    // inside the sun's gravity with deep space beyond it.
-    sun: PlanetConfig = .{ .mass = 100000, .radius = 600, .soi = 60000 },
+    // main.zig): Neptune tops out near 57000. It reaches far beyond that
+    // (150000) on purpose: crossing it is the point of no return (deep space,
+    // zero gravity), so the farther out it sits the closer "reach the edge"
+    // is to true escape velocity — one full tank must NOT be enough to leave
+    // the system (see World.fuel_burn for the budget math).
+    //
+    // Masses are tuned as a set: the sun is heavy enough that solar escape
+    // costs more delta-v than a full tank, planets are scaled to match so
+    // arriving transfers stay slow enough for capture assist to grab, and
+    // the Earth system is deliberately lighter than the rest — a shallower
+    // home well weakens the Oberth discount on departure burns, which is
+    // what separates the cost of "reach Mars" from the cost of "leave
+    // forever" in the first place.
+    sun: PlanetConfig = .{ .mass = 320000, .radius = 600, .soi = 150000 },
     mercury: PlanetConfig = .{ .mass = 2500, .radius = 50, .soi = 900, .core = 90 },
     venus: PlanetConfig = .{ .mass = 7000, .radius = 130, .soi = 2000, .core = 145 },
     earth: PlanetConfig = .{ .mass = 8000, .radius = 140, .soi = 2500 },
     moon: PlanetConfig = .{ .mass = 4000, .radius = 40, .soi = 770, .core = 110 },
-    mars: PlanetConfig = .{ .mass = 4000, .radius = 80, .soi = 1500, .core = 110 },
-    jupiter: PlanetConfig = .{ .mass = 30000, .radius = 300, .soi = 5000 },
-    saturn: PlanetConfig = .{ .mass = 22000, .radius = 250, .soi = 4200 },
-    uranus: PlanetConfig = .{ .mass = 12000, .radius = 180, .soi = 3200 },
-    neptune: PlanetConfig = .{ .mass = 13000, .radius = 175, .soi = 3200 },
+    // Mars is lighter than Earth (as in reality) but its SOI is pulled in
+    // tight so the well at the boundary stays deep enough to bind (and
+    // capture-assist) a Hohmann arrival from Earth: capture needs
+    // mass/soi ≳ 6, and both moons must orbit inside the SOI (see the
+    // phobos/deimos entries in main.zig's `orbits`).
+    mars: PlanetConfig = .{ .mass = 6500, .radius = 80, .soi = 1000, .core = 110 },
+    jupiter: PlanetConfig = .{ .mass = 60000, .radius = 300, .soi = 5000 },
+    saturn: PlanetConfig = .{ .mass = 44000, .radius = 250, .soi = 4200 },
+    uranus: PlanetConfig = .{ .mass = 24000, .radius = 180, .soi = 3200 },
+    neptune: PlanetConfig = .{ .mass = 26000, .radius = 175, .soi = 3200 },
     // Moons. Small SOI bubbles so each moon's gravity stays a local affair
     // inside its parent's SOI; cores larger than the rendered radius keep
     // close flybys integrable, same trick as Earth's moon.
-    phobos: PlanetConfig = .{ .mass = 600, .radius = 16, .soi = 90, .core = 45 },
-    deimos: PlanetConfig = .{ .mass = 400, .radius = 12, .soi = 70, .core = 35 },
-    io: PlanetConfig = .{ .mass = 2600, .radius = 36, .soi = 170, .core = 100 },
-    europa: PlanetConfig = .{ .mass = 2400, .radius = 31, .soi = 150, .core = 90 },
-    ganymede: PlanetConfig = .{ .mass = 3600, .radius = 46, .soi = 200, .core = 110 },
-    callisto: PlanetConfig = .{ .mass = 3000, .radius = 42, .soi = 210, .core = 105 },
+    phobos: PlanetConfig = .{ .mass = 1200, .radius = 16, .soi = 90, .core = 45 },
+    deimos: PlanetConfig = .{ .mass = 800, .radius = 12, .soi = 70, .core = 35 },
+    io: PlanetConfig = .{ .mass = 5200, .radius = 36, .soi = 170, .core = 100 },
+    europa: PlanetConfig = .{ .mass = 4800, .radius = 31, .soi = 150, .core = 90 },
+    ganymede: PlanetConfig = .{ .mass = 7200, .radius = 46, .soi = 200, .core = 110 },
+    callisto: PlanetConfig = .{ .mass = 6000, .radius = 42, .soi = 210, .core = 105 },
 
     pub fn planet(self: *Config, idx: usize) *PlanetConfig {
         return switch (idx) {

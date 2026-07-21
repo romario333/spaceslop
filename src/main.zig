@@ -45,7 +45,8 @@ const Orbit = struct {
 /// Scripted Kepler ellipse of each body, index-aligned with the planets array
 /// (null = the sun, which sits still at the origin). Parents must precede
 /// their children so updateOrbits reads fresh parent state within one pass.
-/// Mean motions are ~10% of the physically correct rate for each altitude —
+/// Mean motions are a few percent of the physically correct rate for each
+/// altitude (~10% before the great mass increase, see config.zig) —
 /// the same arcade slowdown the moon always had, keeping Keplerian ordering
 /// (inner planets visibly outpace outer ones) while an SOI never outruns a
 /// ship trying to get captured. Eccentricities are the real ones where they
@@ -74,8 +75,8 @@ const orbits = [_]?Orbit{
     // follow Kepler's third law at the same ~10% arcade slowdown as the
     // planets — which also preserves the Galileans' 4:2:1 Laplace resonance
     // (Io laps Europa twice and Ganymede four times).
-    .{ .parent = 5, .semi_major = 440, .omega = 0.024, .phase = 1.7, .ecc = 0.015, .peri = 2.10 }, // phobos
-    .{ .parent = 5, .semi_major = 1100, .omega = 0.006, .phase = 3.9, .ecc = 0.0003, .peri = 0.50 }, // deimos
+    .{ .parent = 5, .semi_major = 320, .omega = 0.0387, .phase = 1.7, .ecc = 0.015, .peri = 2.10 }, // phobos
+    .{ .parent = 5, .semi_major = 800, .omega = 0.0097, .phase = 3.9, .ecc = 0.0003, .peri = 0.50 }, // deimos
     .{ .parent = 6, .semi_major = 930, .omega = 0.0208, .phase = 0.6, .ecc = 0.004, .peri = 4.60 }, // io
     .{ .parent = 6, .semi_major = 1480, .omega = 0.0104, .phase = 2.8, .ecc = 0.009, .peri = 1.00 }, // europa
     .{ .parent = 6, .semi_major = 2360, .omega = 0.0052, .phase = 5.1, .ecc = 0.001, .peri = 3.30 }, // ganymede
