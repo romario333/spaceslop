@@ -118,6 +118,21 @@ pub const World = struct {
         return best;
     }
 
+    /// Like `dominantIndex`, but ignoring `excluded`: the body that would own
+    /// `point` if it were just outside `excluded`'s SOI. This is the enclosing
+    /// reference frame (moon → Earth → sun → deep space), used to blend the
+    /// trail between frames near an SOI edge.
+    pub fn enclosingIndex(self: World, point: Vec2, excluded: usize) ?usize {
+        var best: ?usize = null;
+        for (self.planets, 0..) |p, i| {
+            if (i == excluded) continue;
+            if (point.sub(p.pos).len() < p.soi) {
+                if (best == null or p.soi < self.planets[best.?].soi) best = i;
+            }
+        }
+        return best;
+    }
+
     /// Gravitational acceleration at `point` — arcade patched conics: only
     /// the body whose sphere of influence contains the point pulls, so orbits
     /// around every body are clean two-body ellipses with no third-body
@@ -272,6 +287,11 @@ test "nested SOIs resolve to the innermost body regardless of order" {
     try testing.expectEqual(@as(?usize, 0), world.dominantIndex(.{ .x = 7000, .y = 0 }));
     // Beyond the sun's SOI: deep space.
     try testing.expectEqual(@as(?usize, null), world.dominantIndex(.{ .x = 41000, .y = 0 }));
+
+    // enclosingIndex climbs one level up the same hierarchy.
+    try testing.expectEqual(@as(?usize, 1), world.enclosingIndex(.{ .x = 16100, .y = 0 }, 2));
+    try testing.expectEqual(@as(?usize, 0), world.enclosingIndex(.{ .x = 14000, .y = 0 }, 1));
+    try testing.expectEqual(@as(?usize, null), world.enclosingIndex(.{ .x = 7000, .y = 0 }, 0));
 }
 
 test "capture assist drags bound ships in the outer SOI but not flybys" {
