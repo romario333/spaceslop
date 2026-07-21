@@ -11,6 +11,12 @@ jupiter.png — native-detail 560 px banded Jupiter with Great Red Spot, transpa
 saturn.png — native-detail 560 px Saturn with edge-to-edge horizontal rings; intentional vertical transparency preserves ring proportions (exception to zero-padding rule).
 uranus.png — native-detail 560 px pale cyan Uranus, transparent.
 neptune.png — native-detail 560 px deep blue Neptune with storm bands, transparent.
+phobos.png — 336 px irregular cratered Mars moon, transparent.
+deimos.png — 336 px small cratered Mars moon, transparent.
+io.png — 336 px sulfur-yellow volcanic Jupiter moon, transparent.
+europa.png — 336 px ice-cracked Jupiter moon, transparent.
+ganymede.png — 336 px grooved Jupiter moon, transparent.
+callisto.png — 336 px dark cratered Jupiter moon, transparent.
 
 Note: this is a genuinely regenerated pack, not an upscaled version of the
 earlier sprites. It is drawn at 2× world size (`SCALE.txt` = `2`, overriding the
