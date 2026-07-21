@@ -1,7 +1,7 @@
 .{ .sun = .{
     .mass = 100000,
     .radius = 600,
-    .soi = 26000,
+    .soi = 60000,
     .core = 0,
 }, .mercury = .{
     .mass = 2500,
@@ -28,4 +28,24 @@
     .radius = 80,
     .soi = 1500,
     .core = 110,
+}, .jupiter = .{
+    .mass = 30000,
+    .radius = 300,
+    .soi = 5000,
+    .core = 0,
+}, .saturn = .{
+    .mass = 22000,
+    .radius = 250,
+    .soi = 4200,
+    .core = 0,
+}, .uranus = .{
+    .mass = 12000,
+    .radius = 180,
+    .soi = 3200,
+    .core = 0,
+}, .neptune = .{
+    .mass = 13000,
+    .radius = 175,
+    .soi = 3200,
+    .core = 0,
 } }

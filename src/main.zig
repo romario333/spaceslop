@@ -46,6 +46,10 @@ const orbits = [_]?Orbit{
     .{ .parent = 0, .radius = 14500, .omega = 0.0006, .phase = 0.0 }, // earth
     .{ .parent = earth_idx, .radius = 1500, .omega = 0.008, .phase = -0.4 }, // moon
     .{ .parent = 0, .radius = 20000, .omega = 0.0004, .phase = 5.3 }, // mars
+    .{ .parent = 0, .radius = 28000, .omega = 0.00024, .phase = 1.2 }, // jupiter
+    .{ .parent = 0, .radius = 38500, .omega = 0.00015, .phase = 3.6 }, // saturn
+    .{ .parent = 0, .radius = 46500, .omega = 0.00011, .phase = 0.9 }, // uranus
+    .{ .parent = 0, .radius = 53500, .omega = 0.00009, .phase = 4.8 }, // neptune
 };
 
 comptime {
@@ -149,8 +153,8 @@ fn run(init: std.process.Init.Minimal) !void {
     // Gravity uses arcade patched conics (see sim.gravityAt): only the body
     // whose innermost sphere of influence contains the ship pulls on it, so
     // orbits around every body are clean stable ellipses. The whole system is
-    // scripted kinematics — the sun sits at the origin, Mercury through Mars
-    // circle it, the moon circles Earth (see `orbits`) — and each body's SOI
+    // scripted kinematics — the sun sits at the origin, Mercury through
+    // Neptune circle it, the moon circles Earth (see `orbits`) — and each body's SOI
     // travels with it. Bodies are small on screen but pull hard: deep wells
     // inside tight SOI bubbles, plus the sim's capture assist, mean a ship
     // that coasts in slowly settles into orbit on its own, while fast flybys
@@ -263,9 +267,9 @@ fn run(init: std.process.Init.Minimal) !void {
         // Keep the camera centred on the current window size.
         const wheel = in.wheel;
         if (in.zoom_modifier) {
-            // Floor fits the whole inner system: Mars orbits at r=20000 plus
-            // its SOI, so ~43000 units across; 0.02 shows that in one window.
-            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.02, 4.0);
+            // Floor fits the whole system: Neptune orbits at r=53500 plus
+            // its SOI, so ~113000 units across; 0.008 shows that in one window.
+            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.008, 4.0);
         } else if (wheel.x != 0 or wheel.y != 0) {
             // Content follows the fingers: a wheel unit moves the view a
             // fixed number of screen px regardless of zoom.

@@ -51,6 +51,10 @@ pub const SpriteSet = struct {
     earth: rl.Texture2D,
     moon: rl.Texture2D,
     mars: rl.Texture2D,
+    jupiter: rl.Texture2D,
+    saturn: rl.Texture2D,
+    uranus: rl.Texture2D,
+    neptune: rl.Texture2D,
     ship: rl.Texture2D,
     iss: rl.Texture2D,
     px_scale: f32,
@@ -63,6 +67,10 @@ pub const SpriteSet = struct {
             .earth = try rl.loadTexture("resources/" ++ dir ++ "/earth.png"),
             .moon = try rl.loadTexture("resources/" ++ dir ++ "/moon.png"),
             .mars = try rl.loadTexture("resources/" ++ dir ++ "/mars.png"),
+            .jupiter = try rl.loadTexture("resources/" ++ dir ++ "/jupiter.png"),
+            .saturn = try rl.loadTexture("resources/" ++ dir ++ "/saturn.png"),
+            .uranus = try rl.loadTexture("resources/" ++ dir ++ "/uranus.png"),
+            .neptune = try rl.loadTexture("resources/" ++ dir ++ "/neptune.png"),
             .ship = try rl.loadTexture("resources/" ++ dir ++ "/ship.png"),
             .iss = try rl.loadTexture("resources/" ++ dir ++ "/iss.png"),
             .px_scale = px_scale,
@@ -75,8 +83,8 @@ pub const SpriteSet = struct {
         for (self.all()) |t| rl.unloadTexture(t);
     }
 
-    fn all(self: SpriteSet) [8]rl.Texture2D {
-        return .{ self.sun, self.mercury, self.venus, self.earth, self.moon, self.mars, self.ship, self.iss };
+    fn all(self: SpriteSet) [12]rl.Texture2D {
+        return .{ self.sun, self.mercury, self.venus, self.earth, self.moon, self.mars, self.jupiter, self.saturn, self.uranus, self.neptune, self.ship, self.iss };
     }
 
     /// Texture of the world's body at `idx` — canonical body order (cfg.names).
@@ -87,7 +95,11 @@ pub const SpriteSet = struct {
             2 => self.venus,
             3 => self.earth,
             4 => self.moon,
-            else => self.mars,
+            5 => self.mars,
+            6 => self.jupiter,
+            7 => self.saturn,
+            8 => self.uranus,
+            else => self.neptune,
         };
     }
 
@@ -387,6 +399,10 @@ const edge_colors = [_]rl.Color{
     .{ .r = 110, .g = 175, .b = 255, .a = 220 }, // earth
     .{ .r = 215, .g = 215, .b = 225, .a = 220 }, // moon
     .{ .r = 235, .g = 120, .b = 90, .a = 220 }, // mars
+    .{ .r = 225, .g = 170, .b = 120, .a = 220 }, // jupiter
+    .{ .r = 240, .g = 215, .b = 160, .a = 220 }, // saturn
+    .{ .r = 150, .g = 215, .b = 225, .a = 220 }, // uranus
+    .{ .r = 95, .g = 130, .b = 235, .a = 220 }, // neptune
 };
 
 pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
@@ -401,7 +417,7 @@ pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
     const cy = sh / 2.0;
     if (right <= cx or left >= cx or bottom <= cy or top >= cy) return; // tiny window
 
-    // One arrow per off-screen body. No filtering yet — with six bodies the
+    // One arrow per off-screen body. No filtering yet — with ten bodies the
     // edge never gets crowded enough to need it.
     for (planets, 0..) |p, i| {
         const sp = rl.getWorldToScreen2D(v(p.pos), cam);
