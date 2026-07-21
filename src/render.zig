@@ -55,6 +55,12 @@ pub const SpriteSet = struct {
     saturn: rl.Texture2D,
     uranus: rl.Texture2D,
     neptune: rl.Texture2D,
+    phobos: rl.Texture2D,
+    deimos: rl.Texture2D,
+    io: rl.Texture2D,
+    europa: rl.Texture2D,
+    ganymede: rl.Texture2D,
+    callisto: rl.Texture2D,
     ship: rl.Texture2D,
     iss: rl.Texture2D,
     px_scale: f32,
@@ -71,6 +77,12 @@ pub const SpriteSet = struct {
             .saturn = try rl.loadTexture("resources/" ++ dir ++ "/saturn.png"),
             .uranus = try rl.loadTexture("resources/" ++ dir ++ "/uranus.png"),
             .neptune = try rl.loadTexture("resources/" ++ dir ++ "/neptune.png"),
+            .phobos = try rl.loadTexture("resources/" ++ dir ++ "/phobos.png"),
+            .deimos = try rl.loadTexture("resources/" ++ dir ++ "/deimos.png"),
+            .io = try rl.loadTexture("resources/" ++ dir ++ "/io.png"),
+            .europa = try rl.loadTexture("resources/" ++ dir ++ "/europa.png"),
+            .ganymede = try rl.loadTexture("resources/" ++ dir ++ "/ganymede.png"),
+            .callisto = try rl.loadTexture("resources/" ++ dir ++ "/callisto.png"),
             .ship = try rl.loadTexture("resources/" ++ dir ++ "/ship.png"),
             .iss = try rl.loadTexture("resources/" ++ dir ++ "/iss.png"),
             .px_scale = px_scale,
@@ -83,8 +95,8 @@ pub const SpriteSet = struct {
         for (self.all()) |t| rl.unloadTexture(t);
     }
 
-    fn all(self: SpriteSet) [12]rl.Texture2D {
-        return .{ self.sun, self.mercury, self.venus, self.earth, self.moon, self.mars, self.jupiter, self.saturn, self.uranus, self.neptune, self.ship, self.iss };
+    fn all(self: SpriteSet) [18]rl.Texture2D {
+        return .{ self.sun, self.mercury, self.venus, self.earth, self.moon, self.mars, self.jupiter, self.saturn, self.uranus, self.neptune, self.phobos, self.deimos, self.io, self.europa, self.ganymede, self.callisto, self.ship, self.iss };
     }
 
     /// Texture of the world's body at `idx` — canonical body order (cfg.names).
@@ -99,7 +111,13 @@ pub const SpriteSet = struct {
             6 => self.jupiter,
             7 => self.saturn,
             8 => self.uranus,
-            else => self.neptune,
+            9 => self.neptune,
+            10 => self.phobos,
+            11 => self.deimos,
+            12 => self.io,
+            13 => self.europa,
+            14 => self.ganymede,
+            else => self.callisto,
         };
     }
 
@@ -578,6 +596,12 @@ const edge_colors = [_]rl.Color{
     .{ .r = 240, .g = 215, .b = 160, .a = 220 }, // saturn
     .{ .r = 150, .g = 215, .b = 225, .a = 220 }, // uranus
     .{ .r = 95, .g = 130, .b = 235, .a = 220 }, // neptune
+    .{ .r = 165, .g = 140, .b = 120, .a = 220 }, // phobos
+    .{ .r = 195, .g = 175, .b = 150, .a = 220 }, // deimos
+    .{ .r = 235, .g = 205, .b = 90, .a = 220 }, // io
+    .{ .r = 200, .g = 225, .b = 240, .a = 220 }, // europa
+    .{ .r = 170, .g = 180, .b = 195, .a = 220 }, // ganymede
+    .{ .r = 140, .g = 125, .b = 110, .a = 220 }, // callisto
 };
 
 pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
@@ -592,8 +616,8 @@ pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
     const cy = sh / 2.0;
     if (right <= cx or left >= cx or bottom <= cy or top >= cy) return; // tiny window
 
-    // One arrow per off-screen body. No filtering yet — with ten bodies the
-    // edge never gets crowded enough to need it.
+    // One arrow per off-screen body. No filtering yet — moons cluster their
+    // arrows next to their parent's, but the edge stays readable.
     for (planets, 0..) |p, i| {
         const sp = rl.getWorldToScreen2D(v(p.pos), cam);
         // A body with any part of its disc inside the box needs no arrow.
