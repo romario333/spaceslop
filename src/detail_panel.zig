@@ -43,9 +43,10 @@ pub const DetailPanel = struct {
     };
 
     /// Cap on how far the view can pan from the followed body, in world px —
-    /// far enough to survey the sun's whole SOI (the starfield tiles, so
-    /// panning can never outrun it).
-    pub const max_pan: f32 = 26000;
+    /// far enough to reach anything in the system from the inner planets:
+    /// Eris tops out near 135700 from the sun, the Kuiper belt at 78000
+    /// (the starfield tiles, so panning can never outrun it).
+    pub const max_pan: f32 = 160000;
 
     selected: ?usize = null,
     /// Top-left of the panel in screen space, recomputed each frame from the

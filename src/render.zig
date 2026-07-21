@@ -100,7 +100,9 @@ pub const SpriteSet = struct {
     }
 
     /// Texture of the world's body at `idx` — canonical body order (cfg.names).
-    pub fn body(self: *const SpriteSet, idx: usize) rl.Texture2D {
+    /// Null for bodies with no sprite art yet (the Kuiper dwarfs); callers
+    /// fall back to `drawPlaceholderBody`.
+    pub fn body(self: *const SpriteSet, idx: usize) ?rl.Texture2D {
         return switch (idx) {
             0 => self.sun,
             1 => self.mercury,
@@ -117,7 +119,8 @@ pub const SpriteSet = struct {
             12 => self.io,
             13 => self.europa,
             14 => self.ganymede,
-            else => self.callisto,
+            15 => self.callisto,
+            else => null,
         };
     }
 
@@ -213,7 +216,27 @@ pub const Starfield = struct {
     }
 };
 
-/// Visual layer of the asteroid belt. The rocks' kinematics — positions,
+/// Colour scheme of one belt's debris: a per-rock brightness roll plus fixed
+/// channel offsets that push the whole swarm warm (rock) or cold (ice), and
+/// the tint of the annulus underlay.
+pub const BeltPalette = struct {
+    /// Brightness roll: shade = base + rand · range.
+    shade_base: f32,
+    shade_range: f32,
+    /// Channel offsets added to the rolled shade.
+    dr: f32,
+    dg: f32,
+    db: f32,
+    /// Dust annulus tint (alpha is per stacked layer, see draw).
+    dust: rl.Color,
+
+    /// Sun-baked rock: warm greys shading into rust.
+    pub const rocky: BeltPalette = .{ .shade_base = 90, .shade_range = 75, .dr = 30, .dg = 8, .db = -12, .dust = .{ .r = 170, .g = 145, .b = 115, .a = 6 } };
+    /// Dirty ice: brighter than rock and shifted blue-white.
+    pub const icy: BeltPalette = .{ .shade_base = 110, .shade_range = 80, .dr = -20, .dg = 5, .db = 35, .dust = .{ .r = 120, .g = 160, .b = 205, .a = 5 } };
+};
+
+/// Visual layer of a debris belt. The rocks' kinematics — positions,
 /// drift, wobble, sizes — live in sim.Belt, because they are the colliders
 /// the ship actually hits; what you see is exactly what hurts. This struct
 /// holds only the cosmetics, index-aligned with the sim's rock array: tumble
@@ -222,125 +245,131 @@ pub const Starfield = struct {
 /// floored in *screen* px, the starfield's trick: zoomed out the swarm
 /// collapses into a speckled dust ring, and a faint annulus underlay keeps
 /// the hazard band legible at any zoom.
-pub const AsteroidBelt = struct {
-    /// Screen-px floor for a rock (slightly under the stars' 1.5, so the
-    /// belt speckle reads as a band without outshining the starfield).
-    const min_px: f32 = 1.4;
-    /// Culling margin: the largest rock radius times the largest vertex
-    /// jitter, in world px.
-    const margin: f32 = 26.0;
-    const max_verts = 10;
+pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
+    return struct {
+        /// Screen-px floor for a rock (slightly under the stars' 1.5, so the
+        /// belt speckle reads as a band without outshining the starfield).
+        const min_px: f32 = 1.4;
+        /// Culling margin: the largest rock radius times the largest vertex
+        /// jitter, in world px.
+        const margin: f32 = 26.0;
+        const max_verts = 10;
 
-    const Visual = struct {
-        /// Tumble rate, rad/s (signed — some spin retrograde).
-        spin: f32,
-        nverts: u8,
-        color: rl.Color,
-        shadow: rl.Color,
-        /// Unit outline: vertices around the origin at radius ~0.62–1.30,
-        /// scaled by the sim rock's size at draw time.
-        verts: [max_verts]Vec2,
-    };
+        const Visual = struct {
+            /// Tumble rate, rad/s (signed — some spin retrograde).
+            spin: f32,
+            nverts: u8,
+            color: rl.Color,
+            shadow: rl.Color,
+            /// Unit outline: vertices around the origin at radius ~0.62–1.30,
+            /// scaled by the sim rock's size at draw time.
+            verts: [max_verts]Vec2,
+        };
 
-    visuals: [sim.Belt.rock_count]Visual = undefined,
+        visuals: [count]Visual = undefined,
 
-    pub fn init(self: *AsteroidBelt, seed: u64) void {
-        var prng = std.Random.DefaultPrng.init(seed);
-        const rng = prng.random();
-        for (&self.visuals) |*vis| {
-            const shade = 90.0 + rng.float(f32) * 75.0;
-            vis.* = .{
-                .spin = (rng.float(f32) - 0.5) * 2.4,
-                .nverts = 7 + rng.uintLessThan(u8, 4),
-                .color = .{
-                    .r = @intFromFloat(shade + 30),
-                    .g = @intFromFloat(shade + 8),
-                    .b = @intFromFloat(shade - 12),
-                    .a = 255,
-                },
-                .shadow = .{
-                    .r = @intFromFloat((shade + 30) * 0.55),
-                    .g = @intFromFloat((shade + 8) * 0.55),
-                    .b = @intFromFloat((shade - 12) * 0.55),
-                    .a = 255,
-                },
-                .verts = undefined,
-            };
-            // Irregular outline: evenly spread vertices, each nudged along
-            // the ring (±¼ step keeps them sorted, so the polygon stays
-            // simple) and jittered in radius. Star-convex from the origin,
-            // which is all the triangle fan needs. Decreasing angle, because
-            // raylib's y-down 2D winding culls the other direction.
-            const n: f32 = @floatFromInt(vis.nverts);
-            for (vis.verts[0..vis.nverts], 0..) |*vert, k| {
-                const step = std.math.tau / n;
-                const ang = step * @as(f32, @floatFromInt(k)) + (rng.float(f32) - 0.5) * step * 0.5;
-                vert.* = Vec2.fromAngle(-ang).scale(0.62 + rng.float(f32) * 0.68);
-            }
-        }
-    }
+        const Self = @This();
 
-    pub fn draw(self: *const AsteroidBelt, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
-        // Dusty annulus underlay: marks the hazard band at every zoom and
-        // gives the speckle something to sit on. Stacked concentric rings,
-        // each pulled in from both edges, so the accumulated alpha steps up
-        // toward mid-belt roughly like the sim's density bump — no hard rim
-        // where dust meets space.
-        const dust: rl.Color = .{ .r = 170, .g = 145, .b = 115, .a = 6 };
-        const width = sim.Belt.outer - sim.Belt.inner;
-        var layer: f32 = 0;
-        while (layer < 4) : (layer += 1) {
-            const inset = width * layer / 9.0;
-            rl.drawRing(v(center), sim.Belt.inner + inset, sim.Belt.outer - inset, 0, 360, 360, dust);
-        }
-
-        const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
-        const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
-        const left = cam.target.x - view_w / 2.0 - margin;
-        const right = cam.target.x + view_w / 2.0 + margin;
-        const top = cam.target.y - view_h / 2.0 - margin;
-        const bottom = cam.target.y + view_h / 2.0 + margin;
-
-        std.debug.assert(belt.rocks.len <= self.visuals.len);
-        const px = min_px / cam.zoom;
-        for (belt.rocks, 0..) |rock, i| {
-            const pos = sim.Belt.rockState(rock, center, belt.time).pos;
-            if (pos.x < left or pos.x > right or pos.y < top or pos.y > bottom) continue;
-            const vis = &self.visuals[i];
-            if (rock.size <= px) {
-                // Sub-pixel at this zoom: a flat rect, same as the starfield.
-                rl.drawRectangleV(.{ .x = pos.x - px / 2.0, .y = pos.y - px / 2.0 }, .{ .x = px, .y = px }, vis.color);
-                continue;
-            }
-            // Tumble the unit outline and scale it up to the rock's size.
-            const spin_ang = rock.wob_phase + vis.spin * belt.time;
-            const c = @cos(spin_ang);
-            const s = @sin(spin_ang);
-            var world_verts: [max_verts]Vec2 = undefined;
-            for (vis.verts[0..vis.nverts], world_verts[0..vis.nverts]) |vert, *w| {
-                w.* = .{
-                    .x = (c * vert.x - s * vert.y) * rock.size,
-                    .y = (s * vert.x + c * vert.y) * rock.size,
+        pub fn init(self: *Self, seed: u64) void {
+            var prng = std.Random.DefaultPrng.init(seed);
+            const rng = prng.random();
+            for (&self.visuals) |*vis| {
+                const shade = palette.shade_base + rng.float(f32) * palette.shade_range;
+                vis.* = .{
+                    .spin = (rng.float(f32) - 0.5) * 2.4,
+                    .nverts = 7 + rng.uintLessThan(u8, 4),
+                    .color = .{
+                        .r = @intFromFloat(shade + palette.dr),
+                        .g = @intFromFloat(shade + palette.dg),
+                        .b = @intFromFloat(shade + palette.db),
+                        .a = 255,
+                    },
+                    .shadow = .{
+                        .r = @intFromFloat((shade + palette.dr) * 0.55),
+                        .g = @intFromFloat((shade + palette.dg) * 0.55),
+                        .b = @intFromFloat((shade + palette.db) * 0.55),
+                        .a = 255,
+                    },
+                    .verts = undefined,
                 };
+                // Irregular outline: evenly spread vertices, each nudged along
+                // the ring (±¼ step keeps them sorted, so the polygon stays
+                // simple) and jittered in radius. Star-convex from the origin,
+                // which is all the triangle fan needs. Decreasing angle, because
+                // raylib's y-down 2D winding culls the other direction.
+                const n: f32 = @floatFromInt(vis.nverts);
+                for (vis.verts[0..vis.nverts], 0..) |*vert, k| {
+                    const step = std.math.tau / n;
+                    const ang = step * @as(f32, @floatFromInt(k)) + (rng.float(f32) - 0.5) * step * 0.5;
+                    vert.* = Vec2.fromAngle(-ang).scale(0.62 + rng.float(f32) * 0.68);
+                }
             }
-            // Fan from the centroid: [centre, v0..vn, v0] closes the loop.
-            var pts: [max_verts + 2]rl.Vector2 = undefined;
-            pts[0] = v(pos);
-            for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(pos.add(w));
-            pts[vis.nverts + 1] = pts[1];
-            rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.color);
-            // Fake lighting: the same outline at 0.5 scale, pushed away from
-            // the sun by 0.28·size — stays inside the 0.62 minimum vertex
-            // radius, so the shadow never pokes out of the silhouette.
-            const away = pos.sub(center).normalized().scale(rock.size * 0.28);
-            const spos = pos.add(away);
-            pts[0] = v(spos);
-            for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(spos.add(w.scale(0.5)));
-            pts[vis.nverts + 1] = pts[1];
-            rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.shadow);
         }
-    }
-};
+
+        pub fn draw(self: *const Self, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
+            // Dusty annulus underlay: marks the hazard band at every zoom and
+            // gives the speckle something to sit on. Stacked concentric rings,
+            // each pulled in from both edges, so the accumulated alpha steps up
+            // toward mid-belt roughly like the sim's density bump — no hard rim
+            // where dust meets space.
+            const width = belt.band.outer - belt.band.inner;
+            var layer: f32 = 0;
+            while (layer < 4) : (layer += 1) {
+                const inset = width * layer / 9.0;
+                rl.drawRing(v(center), belt.band.inner + inset, belt.band.outer - inset, 0, 360, 360, palette.dust);
+            }
+
+            const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+            const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+            const left = cam.target.x - view_w / 2.0 - margin;
+            const right = cam.target.x + view_w / 2.0 + margin;
+            const top = cam.target.y - view_h / 2.0 - margin;
+            const bottom = cam.target.y + view_h / 2.0 + margin;
+
+            std.debug.assert(belt.rocks.len <= self.visuals.len);
+            const px = min_px / cam.zoom;
+            for (belt.rocks, 0..) |rock, i| {
+                const pos = sim.Belt.rockState(rock, center, belt.time).pos;
+                if (pos.x < left or pos.x > right or pos.y < top or pos.y > bottom) continue;
+                const vis = &self.visuals[i];
+                if (rock.size <= px) {
+                    // Sub-pixel at this zoom: a flat rect, same as the starfield.
+                    rl.drawRectangleV(.{ .x = pos.x - px / 2.0, .y = pos.y - px / 2.0 }, .{ .x = px, .y = px }, vis.color);
+                    continue;
+                }
+                // Tumble the unit outline and scale it up to the rock's size.
+                const spin_ang = rock.wob_phase + vis.spin * belt.time;
+                const c = @cos(spin_ang);
+                const s = @sin(spin_ang);
+                var world_verts: [max_verts]Vec2 = undefined;
+                for (vis.verts[0..vis.nverts], world_verts[0..vis.nverts]) |vert, *w| {
+                    w.* = .{
+                        .x = (c * vert.x - s * vert.y) * rock.size,
+                        .y = (s * vert.x + c * vert.y) * rock.size,
+                    };
+                }
+                // Fan from the centroid: [centre, v0..vn, v0] closes the loop.
+                var pts: [max_verts + 2]rl.Vector2 = undefined;
+                pts[0] = v(pos);
+                for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(pos.add(w));
+                pts[vis.nverts + 1] = pts[1];
+                rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.color);
+                // Fake lighting: the same outline at 0.5 scale, pushed away from
+                // the sun by 0.28·size — stays inside the 0.62 minimum vertex
+                // radius, so the shadow never pokes out of the silhouette.
+                const away = pos.sub(center).normalized().scale(rock.size * 0.28);
+                const spos = pos.add(away);
+                pts[0] = v(spos);
+                for (world_verts[0..vis.nverts], 0..) |w, k| pts[k + 1] = v(spos.add(w.scale(0.5)));
+                pts[vis.nverts + 1] = pts[1];
+                rl.drawTriangleFan(pts[0 .. @as(usize, vis.nverts) + 2], vis.shadow);
+            }
+        }
+    };
+}
+
+pub const AsteroidBelt = BeltVisuals(sim.Belt.Band.asteroid.count, .rocky);
+pub const KuiperBelt = BeltVisuals(sim.Belt.Band.kuiper.count, .icy);
 
 /// Cheap deterministic 0..1 hash, the shader's fract(sin(n)·43758…) trick.
 fn hash(n: f32) f32 {
@@ -753,7 +782,26 @@ const edge_colors = [_]rl.Color{
     .{ .r = 200, .g = 225, .b = 240, .a = 220 }, // europa
     .{ .r = 170, .g = 180, .b = 195, .a = 220 }, // ganymede
     .{ .r = 140, .g = 125, .b = 110, .a = 220 }, // callisto
+    .{ .r = 205, .g = 185, .b = 165, .a = 220 }, // pluto
+    .{ .r = 225, .g = 228, .b = 238, .a = 220 }, // haumea
+    .{ .r = 210, .g = 160, .b = 130, .a = 220 }, // makemake
+    .{ .r = 215, .g = 222, .b = 232, .a = 220 }, // eris
 };
+
+/// Stand-in disc for a body with no sprite art yet: the body's edge-arrow
+/// tint as a rim over a darkened fill, so it already reads in the right
+/// colour family and swaps cleanly for a sprite later.
+pub fn drawPlaceholderBody(pos: Vec2, radius: f32, idx: usize) void {
+    const tint = edge_colors[idx];
+    const fill: rl.Color = .{
+        .r = @intFromFloat(@as(f32, @floatFromInt(tint.r)) * 0.45),
+        .g = @intFromFloat(@as(f32, @floatFromInt(tint.g)) * 0.45),
+        .b = @intFromFloat(@as(f32, @floatFromInt(tint.b)) * 0.45),
+        .a = 255,
+    };
+    rl.drawCircleV(v(pos), radius, fill);
+    rl.drawCircleLinesV(v(pos), radius, .{ .r = tint.r, .g = tint.g, .b = tint.b, .a = 255 });
+}
 
 pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
     const sw: f32 = @floatFromInt(rl.getScreenWidth());

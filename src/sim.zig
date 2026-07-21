@@ -176,34 +176,54 @@ pub const Flare = struct {
     }
 };
 
-/// The asteroid belt: an annulus of rock centred on the sun, in the gap
-/// between Mars and Jupiter. Every rock is a real collider — the same
-/// kinematics the renderer draws — so damage comes from actually hitting
-/// one, not from a fuzzy damage field. Each rock rides a slow heliocentric
-/// circle with a radial wobble; on contact the ship takes one arcade hit
-/// (scaled by impact speed and rock size) and flies on undeflected — the
-/// hit cooldown plus the approaching-only check keep a single pass through
-/// a rock from re-triggering every step. At `rock_count`
-/// rocks a straight crossing sweeps into ~1–2 of them on average: dodging
-/// is possible, complacency is punished, and loitering inside means the
-/// wobbling swarm eventually comes to you.
+/// A debris belt: an annulus of rocks centred on the sun. Every rock is a
+/// real collider — the same kinematics the renderer draws — so damage comes
+/// from actually hitting one, not from a fuzzy damage field. Each rock rides
+/// a slow heliocentric circle with a radial wobble; on contact the ship takes
+/// one arcade hit (scaled by impact speed and rock size) and flies on
+/// undeflected — the hit cooldown plus the approaching-only check keep a
+/// single pass through a rock from re-triggering every step. The world has
+/// two of these: the rocky asteroid belt between Mars and Jupiter and the icy
+/// Kuiper belt beyond Neptune; which is which is a `Band` of tuning numbers.
 pub const Belt = struct {
-    /// Edge radii from the sun, px. Inner hugs Mars' apoapsis-plus-SOI
-    /// (21000 + 1500); outer stops shy of Jupiter's orbit. Jupiter's big SOI
-    /// dips into the outer band at its periapsis bearing — unavoidable in
-    /// this compressed system, and harmless: gravity handover and rock
-    /// collisions are independent concerns.
-    pub const inner: f32 = 22500;
-    pub const outer: f32 = 25500;
-    /// How many rocks fillRocks seeds the belt with. Sets the hit odds: with
-    /// ~42 px of combined collision width per rock, a 4000-px crossing
-    /// expects 4500 · (4000·42 / belt area) ≈ 1.7 hits.
-    pub const rock_count = 4500;
     /// Collision radius of the ship, px — roughly the sprite's half-length.
     pub const ship_radius: f32 = 15;
     /// Ship-to-belt distance gate: beyond every rock's reach (max wobble +
     /// max rock size + ship radius), the whole collision pass is skipped.
     pub const gate_margin: f32 = 120;
+
+    /// Geometry and pacing of one belt. The named constants below are the
+    /// two bands the game ships with; `count` sets each band's hit odds
+    /// (expected hits for a straight radial crossing ≈
+    /// count · width · ~42 px combined collision width / band area).
+    pub const Band = struct {
+        /// Edge radii from the sun, px.
+        inner: f32,
+        outer: f32,
+        /// Heliocentric drift rate mid-band, rad/s; fillRocks shears the
+        /// swarm around it by Kepler's third law.
+        mid_omega: f32,
+        /// How many rocks fillRocks seeds the band with.
+        count: usize,
+
+        /// The classic belt, in the gap between Mars and Jupiter. Inner hugs
+        /// Mars' apoapsis-plus-SOI (21000 + 1500); outer stops shy of
+        /// Jupiter's orbit. Jupiter's big SOI dips into the outer band at its
+        /// periapsis bearing — unavoidable in this compressed system, and
+        /// harmless: gravity handover and rock collisions are independent
+        /// concerns. mid_omega matches the planets' arcade rate at r=24000
+        /// (between Mars' 0.0004 and Jupiter's 0.00024). At 4500 rocks a
+        /// 3000-px crossing expects ~1.7 hits: dodging is possible,
+        /// complacency is punished.
+        pub const asteroid: Band = .{ .inner = 22500, .outer = 25500, .mid_omega = 0.0003, .count = 4500 };
+        /// The Kuiper belt, past Neptune's apoapsis-plus-SOI (~57000) and
+        /// deep into the sun's outer SOI — a full tank barely coasts to its
+        /// inner rim, so this is frontier scenery more than a gauntlet. Six
+        /// times the asteroid belt's width with fewer rocks: sparse like the
+        /// real thing, a straight crossing expects only ~0.4 hits. mid_omega
+        /// is the same arcade Kepler rate carried out to r=69000.
+        pub const kuiper: Band = .{ .inner = 60000, .outer = 78000, .mid_omega = 0.000062, .count = 4000 };
+    };
 
     pub const Rock = struct {
         /// Mean orbit radius from the sun; the wobble oscillates around it.
@@ -219,6 +239,7 @@ pub const Belt = struct {
 
     pub const State = struct { pos: Vec2, vel: Vec2 };
 
+    band: Band = .asteroid,
     rocks: []const Rock,
     /// Belt clock, advanced by World.step — rock positions are a pure
     /// function of it, so a paused sim holds every rock still.
@@ -246,26 +267,25 @@ pub const Belt = struct {
         return std.math.clamp(0.06 * impact_speed + 0.7 * size, 3, 30);
     }
 
-    /// Seed `rocks` with the belt swarm. Radii follow a triangular
+    /// Seed `rocks` with `band`'s swarm. Radii follow a triangular
     /// distribution peaked mid-belt (mean of two uniforms), so the belt is
     /// thickest — and most dangerous — in the middle. Deterministic from
     /// `seed`; the renderer rolls its cosmetic attributes (shape, colour,
     /// spin) from its own stream, index-aligned with this array.
-    pub fn fillRocks(rocks: []Rock, seed: u64) void {
+    pub fn fillRocks(rocks: []Rock, seed: u64, band: Band) void {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
-        const width = outer - inner;
-        const mid = (inner + outer) / 2.0;
+        const width = band.outer - band.inner;
+        const mid = (band.inner + band.outer) / 2.0;
         for (rocks) |*rock| {
             const u = (rng.float(f32) + rng.float(f32)) / 2.0;
-            const orbit_r = inner + u * width;
+            const orbit_r = band.inner + u * width;
             rock.* = .{
                 .orbit_r = orbit_r,
                 .phase = rng.float(f32) * std.math.tau,
-                // Keplerian shear at the planets' arcade rate (~0.0003 rad/s
-                // mid-belt, between Mars' 0.0004 and Jupiter's 0.00024), so
-                // inner rocks visibly outpace outer ones over a long watch.
-                .omega = 0.0003 * std.math.pow(f32, mid / orbit_r, 1.5) * (0.9 + rng.float(f32) * 0.2),
+                // Keplerian shear around the band's arcade rate, so inner
+                // rocks visibly outpace outer ones over a long watch.
+                .omega = band.mid_omega * std.math.pow(f32, mid / orbit_r, 1.5) * (0.9 + rng.float(f32) * 0.2),
                 .wob_amp = 15.0 + rng.float(f32) * 60.0,
                 .wob_freq = 0.15 + rng.float(f32) * 0.45,
                 .wob_phase = rng.float(f32) * std.math.tau,
@@ -324,6 +344,8 @@ pub const World = struct {
     flare: ?Flare = null,
     /// The asteroid belt, if this world has one (tests mostly don't).
     belt: ?Belt = null,
+    /// The Kuiper belt — same machinery as `belt`, icy band beyond Neptune.
+    kuiper: ?Belt = null,
 
     /// Erupt a flare from the root body (planets[0], the sun) toward `angle`.
     /// The caller picks the angle so the sim stays free of randomness.
@@ -431,46 +453,51 @@ pub const World = struct {
 
         self.ship.hit_timer = @max(0, self.ship.hit_timer - dt);
 
-        // Asteroid belt: collide the ship against the actual rock swarm.
-        if (self.belt) |*belt| {
-            belt.time += dt;
-            const center = if (self.planets.len > 0) self.planets[0].pos else Vec2{};
-            const rel = self.ship.pos.sub(center);
-            const ship_r = rel.len();
-            // Radial gate: skip the whole pass unless the ship is within any
-            // rock's possible reach of the annulus. The cooldown gate keeps
-            // the hits discrete — the ship isn't deflected by a collision,
-            // so without it an overlap would deal damage every step.
-            if (self.ship.hit_timer <= 0 and
-                ship_r > Belt.inner - Belt.gate_margin and ship_r < Belt.outer + Belt.gate_margin)
-            {
-                const ship_ang = std.math.atan2(rel.y, rel.x);
-                for (belt.rocks) |rock| {
-                    // Bearing prefilter: the arc between the ship's and the
-                    // rock's bearings lower-bounds their distance (radii are
-                    // within reach of orbit_r or the radial gate failed), so
-                    // ~everything skips before paying for the rock's sincos.
-                    const reach = rock.size + Belt.ship_radius + rock.wob_amp;
-                    const dang = @mod(rock.phase + rock.omega * belt.time - ship_ang + std.math.pi, std.math.tau) - std.math.pi;
-                    if (@abs(dang) * (rock.orbit_r - 200.0) > reach + 10.0) continue;
+        // Belts: collide the ship against the actual rock swarms. The shared
+        // hit cooldown means at most one strike lands per step across both.
+        if (self.belt) |*belt| self.collideBelt(belt, dt);
+        if (self.kuiper) |*belt| self.collideBelt(belt, dt);
+    }
 
-                    const st = Belt.rockState(rock, center, belt.time);
-                    const d = self.ship.pos.sub(st.pos);
-                    const dist = d.len();
-                    const min_dist = rock.size + Belt.ship_radius;
-                    if (dist >= min_dist) continue;
-                    const n = if (dist > 0.001) d.scale(1.0 / dist) else Vec2{ .x = 1 };
-                    const vn = self.ship.vel.sub(st.vel).dot(n);
-                    if (vn >= 0) continue; // overlapping but already separating
+    /// Advance one belt's clock and collide the ship against its swarm.
+    fn collideBelt(self: *World, belt: *Belt, dt: f32) void {
+        belt.time += dt;
+        const center = if (self.planets.len > 0) self.planets[0].pos else Vec2{};
+        const rel = self.ship.pos.sub(center);
+        const ship_r = rel.len();
+        // Radial gate: skip the whole pass unless the ship is within any
+        // rock's possible reach of the annulus. The cooldown gate keeps
+        // the hits discrete — the ship isn't deflected by a collision,
+        // so without it an overlap would deal damage every step.
+        if (self.ship.hit_timer <= 0 and
+            ship_r > belt.band.inner - Belt.gate_margin and ship_r < belt.band.outer + Belt.gate_margin)
+        {
+            const ship_ang = std.math.atan2(rel.y, rel.x);
+            for (belt.rocks) |rock| {
+                // Bearing prefilter: the arc between the ship's and the
+                // rock's bearings lower-bounds their distance (radii are
+                // within reach of orbit_r or the radial gate failed), so
+                // ~everything skips before paying for the rock's sincos.
+                const reach = rock.size + Belt.ship_radius + rock.wob_amp;
+                const dang = @mod(rock.phase + rock.omega * belt.time - ship_ang + std.math.pi, std.math.tau) - std.math.pi;
+                if (@abs(dang) * (rock.orbit_r - 200.0) > reach + 10.0) continue;
 
-                    // Crunch: damage from the closing speed. The ship's
-                    // trajectory is untouched — it punches straight through,
-                    // and the cooldown plus the separating check above stop
-                    // the same rock from hitting again on the way out.
-                    self.ship.health = @max(0, self.ship.health - Belt.hitDamage(-vn, rock.size));
-                    self.ship.hit_timer = Ship.hit_cooldown;
-                    break;
-                }
+                const st = Belt.rockState(rock, center, belt.time);
+                const d = self.ship.pos.sub(st.pos);
+                const dist = d.len();
+                const min_dist = rock.size + Belt.ship_radius;
+                if (dist >= min_dist) continue;
+                const n = if (dist > 0.001) d.scale(1.0 / dist) else Vec2{ .x = 1 };
+                const vn = self.ship.vel.sub(st.vel).dot(n);
+                if (vn >= 0) continue; // overlapping but already separating
+
+                // Crunch: damage from the closing speed. The ship's
+                // trajectory is untouched — it punches straight through,
+                // and the cooldown plus the separating check above stop
+                // the same rock from hitting again on the way out.
+                self.ship.health = @max(0, self.ship.health - Belt.hitDamage(-vn, rock.size));
+                self.ship.hit_timer = Ship.hit_cooldown;
+                break;
             }
         }
     }
