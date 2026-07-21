@@ -43,6 +43,7 @@ cd zig-out/web && python3 -m http.server 8000
 | `R` | reset ship |
 | `T` | cycle visual theme (pixelart → scifi-60s → classic) |
 | `O` | toggle sphere-of-influence rings (off by default) |
+| hover a planet | show its name next to the cursor |
 | click a planet | open the detail panel; its debug section has live sliders for mass, SOI and size |
 
 Planet tuning (mass, visual radius, SOI, gravity core) lives in **`planets.zon`**

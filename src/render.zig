@@ -447,6 +447,39 @@ pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
     }
 }
 
+/// Name tag for the body under the cursor, drawn in screen space beside the
+/// pointer. It reuses the edge-arrow tints so a body reads the same whether
+/// you meet it as an off-screen arrow or under the mouse.
+const hover_text_size: i32 = 16;
+const hover_pad: f32 = 6.0;
+/// Offset from the cursor's hotspot, far enough down-right to clear the arrow.
+const hover_cursor_dx: f32 = 16.0;
+const hover_cursor_dy: f32 = 18.0;
+
+pub fn drawHoverLabel(idx: usize, mouse: rl.Vector2) void {
+    const label = cfg.names[idx];
+    const tw: f32 = @floatFromInt(rl.measureText(label, hover_text_size));
+    const th: f32 = @floatFromInt(hover_text_size);
+    const box_w = tw + 2 * hover_pad;
+    const box_h = th + 2 * hover_pad;
+    const sw: f32 = @floatFromInt(rl.getScreenWidth());
+    const sh: f32 = @floatFromInt(rl.getScreenHeight());
+
+    // Flip to the other side of the cursor rather than letting the tag slide
+    // under it when it would run off the right/bottom edge.
+    var x = mouse.x + hover_cursor_dx;
+    if (x + box_w > sw - 4.0) x = mouse.x - hover_cursor_dx - box_w;
+    var y = mouse.y + hover_cursor_dy;
+    if (y + box_h > sh - 4.0) y = mouse.y - hover_cursor_dy - box_h;
+    x = std.math.clamp(x, 4.0, @max(4.0, sw - box_w - 4.0));
+    y = std.math.clamp(y, 4.0, @max(4.0, sh - box_h - 4.0));
+
+    const box: rl.Rectangle = .{ .x = x, .y = y, .width = box_w, .height = box_h };
+    rl.drawRectangleRec(box, .{ .r = 12, .g = 16, .b = 30, .a = 225 });
+    rl.drawRectangleLinesEx(box, 1, edge_colors[idx]);
+    rl.drawText(label, @intFromFloat(x + hover_pad), @intFromFloat(y + hover_pad), hover_text_size, edge_colors[idx]);
+}
+
 var hud_buf: [192]u8 = undefined;
 
 pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
