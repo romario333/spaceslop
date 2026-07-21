@@ -186,7 +186,10 @@ fn run(init: std.process.Init.Minimal) !void {
     const stars = render.Starfield.init(0x5EED_1234);
 
     var trail: Trail = .{};
-    var show_soi = true;
+    // SOI rings start hidden: the dashed orbit paths already show the system's
+    // layout, and the rings are a physics-debugging overlay you turn on (O)
+    // when you want to see exactly where gravity hands over.
+    var show_soi = false;
     var detail: DetailPanel = .{};
     // Where the view sits relative to the followed body, in world px. Keeping
     // it relative means the camera still rides along with the body while you
@@ -322,6 +325,13 @@ fn run(init: std.process.Init.Minimal) !void {
             defer rl.endMode2D();
 
             stars.draw(cam);
+
+            // Every body moves on a fixed circle around its parent, so its
+            // path is that circle drawn where the parent is right now.
+            for (orbits, 0..) |maybe_orbit, i| {
+                const o = maybe_orbit orelse continue;
+                render.drawOrbitPath(planets[o.parent].pos, o.radius, i, cam);
+            }
 
             trail.draw(&planets);
 
