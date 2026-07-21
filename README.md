@@ -41,7 +41,7 @@ cd zig-out/web && python3 -m http.server 8000
 | scroll / two-finger swipe | pan the view |
 | `⌘` + scroll | zoom |
 | `R` | reset ship |
-| `T` | cycle visual theme (pixelart → scifi-60s → classic) |
+| `T` | cycle visual theme (scifi-60s → classic) |
 | `O` | toggle sphere-of-influence rings (off by default) |
 | hover a planet | show its name next to the cursor |
 | click a planet | open the detail panel; its debug section has live sliders for mass, SOI and size |
@@ -99,8 +99,10 @@ src/input.zig  Input seam: real raylib input + debug-injected synthetic events.
 src/debug.zig  Debug bridge: command dispatcher, TCP server, web export.
 planets.zon    Planet tuning config (ZON), editable in-game via the detail panel.
 web/shell.html Custom Emscripten HTML shell (canvas + loader).
-resources/     Game assets (embedded into the web build), one folder per theme.
+resources/     Game assets as WebP (embedded into the web build), one folder per theme.
 art/           Art source/workspace and the specs the sprites were made to.
+tools/         art2resources.sh: convert an art theme's PNGs into resources/ WebP.
+vendor/        libwebp decoder subset, compiled into the game (raylib can't read WebP).
 build.zig      Native + web targets, plus the `test` step.
 ```
 

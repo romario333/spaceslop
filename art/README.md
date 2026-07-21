@@ -22,9 +22,9 @@ art/
 ```
 
 Work however you like inside `_wip/`, but final deliverables are flat PNGs in
-the theme folders. The game embeds assets from `resources/`; a human (or a later
-task) copies an approved theme folder there — **never write into `resources/`
-yourself.**
+the theme folders. The game embeds assets from `resources/` as WebP; an
+approved theme folder is converted with `tools/art2resources.sh <theme>`
+(PNG → WebP q80) — **never write into `resources/` yourself.**
 
 Every theme folder must contain the same file names so themes are hot-swappable:
 
@@ -89,7 +89,8 @@ drawing that theme. The *content* (what the object is) must match across themes;
 only the *rendering style* changes.
 
 1. **pixelart** — crisp low-res pixel art, limited palette. See
-   [themes/pixelart.md](themes/pixelart.md).
+   [themes/pixelart.md](themes/pixelart.md). *No longer shipped* (dropped from
+   the game to cut web-build size); the exports here are kept as an archive.
 2. **scifi-60s** — 1960s sci-fi illustration: ink lines, retro-futurist pulp /
    space-race poster look. See [themes/scifi-60s.md](themes/scifi-60s.md).
 

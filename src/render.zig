@@ -18,32 +18,55 @@ pub fn v(p: Vec2) rl.Vector2 {
 /// Visual theme, cycled with `T`. The texture themes load sprites from
 /// `resources/<dir>/`; `classic` is the original flat-shape rendering.
 pub const Theme = enum {
-    pixelart,
     scifi_60s,
     classic,
 
     pub fn next(self: Theme) Theme {
         return switch (self) {
-            .pixelart => .scifi_60s,
             .scifi_60s => .classic,
-            .classic => .pixelart,
+            .classic => .scifi_60s,
         };
     }
 
     pub fn label(self: Theme) [:0]const u8 {
         return switch (self) {
-            .pixelart => "pixelart",
             .scifi_60s => "scifi-60s",
             .classic => "classic",
         };
     }
 };
 
+// Sprites ship as WebP, which raylib's stb_image can't decode; the decode
+// half of libwebp is compiled in by build.zig (see vendor/libwebp/README.md).
+extern fn WebPDecodeRGBA(data: [*]const u8, data_size: usize, width: *c_int, height: *c_int) ?[*]u8;
+extern fn WebPFree(ptr: ?*anyopaque) void;
+
+/// WebP-decoding replacement for `rl.loadTexture`. The decoded pixels are
+/// copied into GPU memory by `loadTextureFromImage`, so both the file bytes
+/// and the pixel buffer are freed before returning.
+fn loadTextureWebp(path: [:0]const u8) !rl.Texture2D {
+    const data = try rl.loadFileData(path);
+    defer rl.unloadFileData(data);
+    var w: c_int = 0;
+    var h: c_int = 0;
+    const pixels = WebPDecodeRGBA(data.ptr, data.len, &w, &h) orelse {
+        rl.traceLog(.err, "WebP decode failed: %s", .{path.ptr});
+        return error.WebpDecodeFailed;
+    };
+    defer WebPFree(pixels);
+    return rl.loadTextureFromImage(.{
+        .data = pixels,
+        .width = w,
+        .height = h,
+        .mipmaps = 1,
+        .format = .uncompressed_r8g8b8a8,
+    });
+}
+
 /// One theme's sprites. `px_scale` is world pixels per texture pixel, i.e.
-/// 1 / `art/<theme>/SCALE.txt`: scifi-60s exports at world size (scale 1),
-/// pixelart at 2× (scale 2 → 0.5 world px per texel). With that applied a
-/// planet texture spans exactly its physics diameter — Earth renders at its
-/// full 280 px world diameter and collisions line up.
+/// 1 / `art/<theme>/SCALE.txt`: scifi-60s exports at world size (scale 1).
+/// With that applied a planet texture spans exactly its physics diameter —
+/// Earth renders at its full 280 px world diameter and collisions line up.
 pub const SpriteSet = struct {
     sun: rl.Texture2D,
     mercury: rl.Texture2D,
@@ -67,24 +90,24 @@ pub const SpriteSet = struct {
 
     pub fn load(comptime dir: []const u8, px_scale: f32, filter: rl.TextureFilter) !SpriteSet {
         const set: SpriteSet = .{
-            .sun = try rl.loadTexture("resources/" ++ dir ++ "/sun.png"),
-            .mercury = try rl.loadTexture("resources/" ++ dir ++ "/mercury.png"),
-            .venus = try rl.loadTexture("resources/" ++ dir ++ "/venus.png"),
-            .earth = try rl.loadTexture("resources/" ++ dir ++ "/earth.png"),
-            .moon = try rl.loadTexture("resources/" ++ dir ++ "/moon.png"),
-            .mars = try rl.loadTexture("resources/" ++ dir ++ "/mars.png"),
-            .jupiter = try rl.loadTexture("resources/" ++ dir ++ "/jupiter.png"),
-            .saturn = try rl.loadTexture("resources/" ++ dir ++ "/saturn.png"),
-            .uranus = try rl.loadTexture("resources/" ++ dir ++ "/uranus.png"),
-            .neptune = try rl.loadTexture("resources/" ++ dir ++ "/neptune.png"),
-            .phobos = try rl.loadTexture("resources/" ++ dir ++ "/phobos.png"),
-            .deimos = try rl.loadTexture("resources/" ++ dir ++ "/deimos.png"),
-            .io = try rl.loadTexture("resources/" ++ dir ++ "/io.png"),
-            .europa = try rl.loadTexture("resources/" ++ dir ++ "/europa.png"),
-            .ganymede = try rl.loadTexture("resources/" ++ dir ++ "/ganymede.png"),
-            .callisto = try rl.loadTexture("resources/" ++ dir ++ "/callisto.png"),
-            .ship = try rl.loadTexture("resources/" ++ dir ++ "/ship.png"),
-            .iss = try rl.loadTexture("resources/" ++ dir ++ "/iss.png"),
+            .sun = try loadTextureWebp("resources/" ++ dir ++ "/sun.webp"),
+            .mercury = try loadTextureWebp("resources/" ++ dir ++ "/mercury.webp"),
+            .venus = try loadTextureWebp("resources/" ++ dir ++ "/venus.webp"),
+            .earth = try loadTextureWebp("resources/" ++ dir ++ "/earth.webp"),
+            .moon = try loadTextureWebp("resources/" ++ dir ++ "/moon.webp"),
+            .mars = try loadTextureWebp("resources/" ++ dir ++ "/mars.webp"),
+            .jupiter = try loadTextureWebp("resources/" ++ dir ++ "/jupiter.webp"),
+            .saturn = try loadTextureWebp("resources/" ++ dir ++ "/saturn.webp"),
+            .uranus = try loadTextureWebp("resources/" ++ dir ++ "/uranus.webp"),
+            .neptune = try loadTextureWebp("resources/" ++ dir ++ "/neptune.webp"),
+            .phobos = try loadTextureWebp("resources/" ++ dir ++ "/phobos.webp"),
+            .deimos = try loadTextureWebp("resources/" ++ dir ++ "/deimos.webp"),
+            .io = try loadTextureWebp("resources/" ++ dir ++ "/io.webp"),
+            .europa = try loadTextureWebp("resources/" ++ dir ++ "/europa.webp"),
+            .ganymede = try loadTextureWebp("resources/" ++ dir ++ "/ganymede.webp"),
+            .callisto = try loadTextureWebp("resources/" ++ dir ++ "/callisto.webp"),
+            .ship = try loadTextureWebp("resources/" ++ dir ++ "/ship.webp"),
+            .iss = try loadTextureWebp("resources/" ++ dir ++ "/iss.webp"),
             .px_scale = px_scale,
         };
         for (set.all()) |t| rl.setTextureFilter(t, filter);

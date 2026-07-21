@@ -198,12 +198,10 @@ fn run(init: std.process.Init.Minimal) !void {
     }
 
     // --- Sprites & theme ---------------------------------------------------
-    // Both packs are smooth illustration rendered above world resolution
-    // (pixelart at 2×), so both get bilinear filtering — nearest-neighbour on
-    // a minified 2× texture just aliases.
+    // Smooth illustration rendered at world resolution, so it gets bilinear
+    // filtering.
     var theme: Theme = .scifi_60s;
     const sprite_sets = [_]SpriteSet{
-        try SpriteSet.load("pixelart", 0.5, .bilinear),
         try SpriteSet.load("scifi-60s", 1.0, .bilinear),
     };
     defer for (sprite_sets) |s| s.unload();
@@ -435,8 +433,7 @@ fn run(init: std.process.Init.Minimal) !void {
             if (world.kuiper) |*b| kuiper_visuals.draw(b, planets[0].pos, cam);
 
             const sprites: ?*const SpriteSet = switch (theme) {
-                .pixelart => &sprite_sets[0],
-                .scifi_60s => &sprite_sets[1],
+                .scifi_60s => &sprite_sets[0],
                 .classic => null,
             };
 

@@ -32,6 +32,85 @@ pub fn build(b: *std.Build) !void {
     });
     exe_mod.addImport("raylib", raylib);
 
+    // Sprites ship as WebP (≈¼ the size of quantized PNG), which raylib's
+    // stb_image can't read, so the decode half of libwebp is vendored and
+    // compiled straight into the game (see vendor/libwebp/README.md).
+    // render.zig calls WebPDecodeRGBA through an extern. For the web build,
+    // emccStep adds the emscripten sysroot include path to this module.
+    exe_mod.addIncludePath(b.path("vendor/libwebp"));
+    exe_mod.addCSourceFiles(.{
+        .root = b.path("vendor/libwebp"),
+        // Zig compiles C with UBSan traps in Debug; keep third-party code out
+        // of that so an upstream benign UB can't abort the game.
+        .flags = &.{"-fno-sanitize=undefined"},
+        .files = &.{
+            "src/dec/alpha_dec.c",
+            "src/dec/buffer_dec.c",
+            "src/dec/frame_dec.c",
+            "src/dec/idec_dec.c",
+            "src/dec/io_dec.c",
+            "src/dec/quant_dec.c",
+            "src/dec/tree_dec.c",
+            "src/dec/vp8_dec.c",
+            "src/dec/vp8l_dec.c",
+            "src/dec/webp_dec.c",
+            "src/dsp/alpha_processing.c",
+            "src/dsp/alpha_processing_mips_dsp_r2.c",
+            "src/dsp/alpha_processing_neon.c",
+            "src/dsp/alpha_processing_sse2.c",
+            "src/dsp/alpha_processing_sse41.c",
+            "src/dsp/cpu.c",
+            "src/dsp/dec.c",
+            "src/dsp/dec_clip_tables.c",
+            "src/dsp/dec_mips32.c",
+            "src/dsp/dec_mips_dsp_r2.c",
+            "src/dsp/dec_msa.c",
+            "src/dsp/dec_neon.c",
+            "src/dsp/dec_sse2.c",
+            "src/dsp/dec_sse41.c",
+            "src/dsp/filters.c",
+            "src/dsp/filters_mips_dsp_r2.c",
+            "src/dsp/filters_msa.c",
+            "src/dsp/filters_neon.c",
+            "src/dsp/filters_sse2.c",
+            "src/dsp/lossless.c",
+            "src/dsp/lossless_mips_dsp_r2.c",
+            "src/dsp/lossless_msa.c",
+            "src/dsp/lossless_neon.c",
+            "src/dsp/lossless_sse2.c",
+            "src/dsp/lossless_sse41.c",
+            "src/dsp/rescaler.c",
+            "src/dsp/rescaler_mips32.c",
+            "src/dsp/rescaler_mips_dsp_r2.c",
+            "src/dsp/rescaler_msa.c",
+            "src/dsp/rescaler_neon.c",
+            "src/dsp/rescaler_sse2.c",
+            "src/dsp/upsampling.c",
+            "src/dsp/upsampling_mips_dsp_r2.c",
+            "src/dsp/upsampling_msa.c",
+            "src/dsp/upsampling_neon.c",
+            "src/dsp/upsampling_sse2.c",
+            "src/dsp/upsampling_sse41.c",
+            "src/dsp/yuv.c",
+            "src/dsp/yuv_mips32.c",
+            "src/dsp/yuv_mips_dsp_r2.c",
+            "src/dsp/yuv_neon.c",
+            "src/dsp/yuv_sse2.c",
+            "src/dsp/yuv_sse41.c",
+            "src/utils/bit_reader_utils.c",
+            "src/utils/bit_writer_utils.c",
+            "src/utils/color_cache_utils.c",
+            "src/utils/filters_utils.c",
+            "src/utils/huffman_utils.c",
+            "src/utils/palette.c",
+            "src/utils/quant_levels_dec_utils.c",
+            "src/utils/random_utils.c",
+            "src/utils/rescaler_utils.c",
+            "src/utils/thread_utils.c",
+            "src/utils/utils.c",
+        },
+    });
+
     const run_step = b.step("run", "Run the game");
 
     // Web builds go through Emscripten and are completely separate from native.
@@ -45,10 +124,10 @@ pub fn build(b: *std.Build) !void {
         const install_dir: std.Build.InstallDir = .{ .custom = "web" };
         const emcc_flags = emsdk.emccDefaultFlags(b.allocator, .{ .optimize = optimize });
         var emcc_settings = emsdk.emccDefaultSettings(b.allocator, .{ .optimize = optimize });
-        // Emscripten defaults to a 64 KB stack, which stb_image's PNG decoder
-        // (used by raylib's LoadImage) blows straight through — every texture
-        // load failed with a corrupt-PNG error on the web build. Native has an
-        // 8 MB stack, which is why this only ever showed up in the browser.
+        // Emscripten defaults to a 64 KB stack, which image decoding blows
+        // straight through (originally stb_image's PNG decoder; sprites are
+        // WebP now, but libwebp needs stack room too). Native has an 8 MB
+        // stack, which is why this only ever showed up in the browser.
         emcc_settings.put("STACK_SIZE", "4194304") catch unreachable;
         // Keep the debug-bridge dispatcher callable from the page via
         // Module.ccall (see src/debug.zig and web/shell.html).
