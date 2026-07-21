@@ -78,8 +78,115 @@ fn onMouseButton(window: ?*GlfwWindow, button: c_int, action: c_int, mods: c_int
 pub fn init() void {
     // The web backend routes input through emscripten's html5 callbacks, so
     // there is nothing to chain into; sample() falls back to plain raylib.
-    if (comptime is_web) return;
+    if (comptime is_web) {
+        _ = emscripten_set_wheel_callback_on_thread(
+            "#canvas",
+            null,
+            false,
+            onWheel,
+            em_callback_thread_context_calling_thread,
+        );
+        return;
+    }
     chained = glfwSetMouseButtonCallback(glfwGetCurrentContext(), onMouseButton);
+}
+
+// --- Web scroll normalisation ------------------------------------------------
+// raylib gets its wheel deltas from GLFW on both platforms, but the two GLFWs
+// hand it wildly different numbers for the same trackpad flick:
+//
+//  - native (glfw cocoa_window.m): precise scrolling deltas in pixels, scaled
+//    by 0.1 on both axes.
+//  - web (emscripten's libglfw.js shim): the vertical axis is deltaY/100 but
+//    then *quantised away from zero to a minimum magnitude of 1*, so the
+//    gentlest two-finger nudge reports a whole wheel notch. The horizontal
+//    axis skips the normalisation entirely and forwards raw deltaX pixels,
+//    with the browser's sign — ~100x native and inverted.
+//
+// That is the sensitivity gap. Rather than tune a fudge factor per platform,
+// listen to the DOM wheel event ourselves and convert to the units native GLFW
+// produces; sample() then ignores raylib's value on web. Our listener is on the
+// bubble phase, so the shim's capture-phase handler (which preventDefaults the
+// page scroll for us) still runs first.
+
+const EmMouseEvent = extern struct {
+    timestamp: f64,
+    screen_x: c_int,
+    screen_y: c_int,
+    client_x: c_int,
+    client_y: c_int,
+    ctrl_key: bool,
+    shift_key: bool,
+    alt_key: bool,
+    meta_key: bool,
+    button: c_ushort,
+    buttons: c_ushort,
+    movement_x: c_int,
+    movement_y: c_int,
+    target_x: c_int,
+    target_y: c_int,
+    canvas_x: c_int,
+    canvas_y: c_int,
+    padding: c_int,
+};
+
+const EmWheelEvent = extern struct {
+    mouse: EmMouseEvent,
+    delta_x: f64,
+    delta_y: f64,
+    delta_z: f64,
+    delta_mode: c_uint,
+};
+
+const WheelFn = *const fn (c_int, *const EmWheelEvent, ?*anyopaque) callconv(.c) bool;
+
+extern fn emscripten_set_wheel_callback_on_thread(
+    target: [*:0]const u8,
+    user_data: ?*anyopaque,
+    use_capture: bool,
+    callback: ?WheelFn,
+    target_thread: ?*anyopaque,
+) c_int;
+
+const em_callback_thread_context_calling_thread: ?*anyopaque = @ptrFromInt(0x2);
+
+const dom_delta_pixel: c_uint = 0;
+const dom_delta_line: c_uint = 1;
+const dom_delta_page: c_uint = 2;
+
+var web_wheel: rl.Vector2 = .{ .x = 0, .y = 0 };
+var web_zoom_modifier = false;
+
+/// One axis of a DOM wheel event in GLFW wheel units (one unit = one notch of
+/// a discrete mouse wheel), sign not yet flipped.
+fn wheelSteps(delta: f64, mode: c_uint) f32 {
+    if (delta == 0) return 0;
+    switch (mode) {
+        dom_delta_line => return @floatCast(delta / 3.0), // 3 lines per notch
+        dom_delta_page => return @floatCast(delta),
+        else => {},
+    }
+    // Discrete wheels report whole notches in pixel mode: 100px in Chrome,
+    // 120px in Safari/Firefox. One notch should stay one unit, as on native.
+    const mag = @abs(delta);
+    inline for (.{ 100.0, 120.0 }) |notch| {
+        if (@mod(mag, notch) == 0) return @floatCast(delta / notch);
+    }
+    // Otherwise these are precise (trackpad) pixels: same 0.1 native uses.
+    return @floatCast(delta * 0.1);
+}
+
+fn onWheel(event_type: c_int, e: *const EmWheelEvent, user_data: ?*anyopaque) callconv(.c) bool {
+    _ = event_type;
+    _ = user_data;
+    // DOM deltas point the opposite way to GLFW's (positive deltaY scrolls the
+    // page down; positive GLFW yoffset is a scroll up).
+    web_wheel.x -= wheelSteps(e.delta_x, e.delta_mode);
+    web_wheel.y -= wheelSteps(e.delta_y, e.delta_mode);
+    // Browsers deliver a trackpad pinch as a wheel event with ctrlKey set, and
+    // ⌘+scroll with metaKey. Both mean "zoom" here.
+    if (e.mouse.ctrl_key or e.mouse.meta_key) web_zoom_modifier = true;
+    return true;
 }
 
 // --- Synthetic event state --------------------------------------------------
@@ -114,6 +221,17 @@ var active_click: ?Click = null;
 /// apply and tick down on advancing frames, so injected sequences stay
 /// deterministic under pause/step. Call exactly once per frame.
 pub fn sample(advancing: bool) Frame {
+    // On web our own DOM listener owns the wheel (see onWheel); raylib's value
+    // comes out of emscripten's GLFW shim with the wrong scale on both axes.
+    const wheel = if (comptime is_web) blk: {
+        defer web_wheel = .{ .x = 0, .y = 0 };
+        break :blk web_wheel;
+    } else rl.getMouseWheelMoveV();
+    const zoom_mod = if (comptime is_web) blk: {
+        defer web_zoom_modifier = false;
+        break :blk web_zoom_modifier;
+    } else false;
+
     var f: Frame = .{
         .thrust = rl.isKeyDown(.w) or rl.isKeyDown(.up),
         .brake = rl.isKeyDown(.s) or rl.isKeyDown(.down),
@@ -123,8 +241,8 @@ pub fn sample(advancing: bool) Frame {
         .cycle_theme = rl.isKeyPressed(.t),
         .toggle_soi = rl.isKeyPressed(.o),
         .flare = rl.isKeyPressed(.x),
-        .wheel = rl.getMouseWheelMoveV(),
-        .zoom_modifier = rl.isKeyDown(.left_super) or rl.isKeyDown(.right_super),
+        .wheel = wheel,
+        .zoom_modifier = zoom_mod or rl.isKeyDown(.left_super) or rl.isKeyDown(.right_super),
         .mouse = .{
             .pos = rl.getMousePosition(),
             .pressed = press_latch or rl.isMouseButtonPressed(.left),
