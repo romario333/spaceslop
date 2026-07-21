@@ -380,6 +380,13 @@ fn run(init: std.process.Init.Minimal) !void {
 
         render.drawEdgeArrows(&planets, cam);
         render.drawHud(world, theme, detail.selected);
+        // Name tag for whatever body the cursor is over — same hit test that
+        // clicking uses, and skipped over the panel, which owns its own area.
+        if (!detail.containsPoint(in.mouse.pos)) {
+            if (DetailPanel.pick(&planets, cam, in.mouse.pos)) |idx| {
+                render.drawHoverLabel(idx, in.mouse.pos);
+            }
+        }
         detail.draw(&planets);
 
         // Runs before the deferred endDrawing above swaps buffers, so a

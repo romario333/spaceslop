@@ -127,6 +127,26 @@ pub const DetailPanel = struct {
         };
     }
 
+    /// Body under a screen point, or null. Small bodies stay reachable at any
+    /// zoom: the hit radius is never smaller than ~24 screen px. Clicking and
+    /// hovering share this so the name that appears is the body you'd select.
+    pub fn pick(planets: []const sim.Planet, cam: rl.Camera2D, screen_pos: rl.Vector2) ?usize {
+        const wp = rl.getScreenToWorld2D(screen_pos, cam);
+        const world_m: Vec2 = .{ .x = wp.x, .y = wp.y };
+        for (planets, 0..) |p, i| {
+            const hit = @max(p.radius, 24.0 / cam.zoom);
+            if (world_m.sub(p.pos).len() <= hit) return i;
+        }
+        return null;
+    }
+
+    /// Whether a screen point lands on the open panel (never true with no
+    /// selection). Lets the caller keep world hover effects off the panel.
+    pub fn containsPoint(self: DetailPanel, p: rl.Vector2) bool {
+        if (self.selected == null) return false;
+        return rl.checkCollisionPointRec(p, self.panelRect());
+    }
+
     fn fieldPtr(p: *sim.Planet, i: usize) *f32 {
         return switch (i) {
             0 => &p.mass,
@@ -191,23 +211,16 @@ pub const DetailPanel = struct {
         // it the camera's frame of reference; clicking it again, or empty
         // space, deselects and returns the view to the ship.
         if (mouse.pressed) {
-            const wp = rl.getScreenToWorld2D(m, cam);
-            const world_m: Vec2 = .{ .x = wp.x, .y = wp.y };
             const was = self.selected;
             self.selected = null;
             pan_offset.* = .{};
-            for (planets, 0..) |p, i| {
-                // Small bodies stay clickable at any zoom: at least ~24 screen px.
-                const hit = @max(p.radius, 24.0 / cam.zoom);
-                if (world_m.sub(p.pos).len() <= hit) {
-                    if (was != i) {
-                        self.selected = i;
-                        // Selecting must not yank the view to the planet:
-                        // keep the camera centre where it is, re-expressed
-                        // as an offset from the newly followed body.
-                        pan_offset.* = (Vec2{ .x = cam.target.x, .y = cam.target.y }).sub(p.pos);
-                    }
-                    break;
+            if (pick(planets, cam, m)) |i| {
+                if (was != i) {
+                    self.selected = i;
+                    // Selecting must not yank the view to the planet:
+                    // keep the camera centre where it is, re-expressed
+                    // as an offset from the newly followed body.
+                    pan_offset.* = (Vec2{ .x = cam.target.x, .y = cam.target.y }).sub(planets[i].pos);
                 }
             }
         }
