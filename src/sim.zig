@@ -33,7 +33,39 @@ pub const Vec2 = struct {
     pub fn fromAngle(radians: f32) Vec2 {
         return .{ .x = @cos(radians), .y = @sin(radians) };
     }
+    /// `a` rotated by `radians` (same handedness as `fromAngle`).
+    pub fn rotated(a: Vec2, radians: f32) Vec2 {
+        const c = @cos(radians);
+        const s = @sin(radians);
+        return .{ .x = c * a.x - s * a.y, .y = s * a.x + c * a.y };
+    }
 };
+
+/// Position and velocity on a Kepler ellipse, in the orbit's own frame: the
+/// focus (parent body) at the origin, periapsis on the +x axis.
+pub const KeplerState = struct { pos: Vec2, vel: Vec2 };
+
+/// State on a Kepler ellipse with semi-major axis `a`, eccentricity `e` and
+/// mean motion `n` (average rad/s), at mean anomaly `m`. Kepler's equation
+/// m = E − e·sinE has no closed form; Newton's method from E = m reaches
+/// f32 precision in a few steps for any e well below 1. The velocity falls
+/// out of the same eccentric anomaly: dE/dt = n / (1 − e·cosE), fast at
+/// periapsis and slow at apoapsis — Kepler's second law.
+pub fn keplerState(a: f32, e: f32, n: f32, m: f32) KeplerState {
+    var ea = m;
+    var iter: usize = 0;
+    while (iter < 6) : (iter += 1) {
+        ea -= (ea - e * @sin(ea) - m) / (1 - e * @cos(ea));
+    }
+    const minor = @sqrt(1 - e * e); // semi-minor axis as a fraction of `a`
+    const cos_ea = @cos(ea);
+    const sin_ea = @sin(ea);
+    const ea_dot = n / (1 - e * cos_ea);
+    return .{
+        .pos = .{ .x = a * (cos_ea - e), .y = a * minor * sin_ea },
+        .vel = .{ .x = -a * sin_ea * ea_dot, .y = a * minor * cos_ea * ea_dot },
+    };
+}
 
 pub const Planet = struct {
     pos: Vec2,
@@ -209,6 +241,62 @@ test "Vec2 arithmetic" {
 
     const n = a.normalized();
     try testing.expectApproxEqAbs(@as(f32, 1), n.len(), 1e-6);
+}
+
+test "Vec2.rotated turns counter-clockwise from +x" {
+    const r = (Vec2{ .x = 1, .y = 0 }).rotated(std.math.pi / 2.0);
+    try testing.expectApproxEqAbs(@as(f32, 0), r.x, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 1), r.y, 1e-6);
+}
+
+test "keplerState with zero eccentricity is a uniform circle" {
+    const a: f32 = 1500;
+    const n: f32 = 0.008;
+    var m: f32 = 0;
+    while (m < std.math.tau) : (m += 0.37) {
+        const s = keplerState(a, 0, n, m);
+        try testing.expectApproxEqRel(a, s.pos.len(), 1e-5);
+        try testing.expectApproxEqRel(n * a, s.vel.len(), 1e-5);
+        // Velocity is tangential: no radial component.
+        try testing.expectApproxEqAbs(@as(f32, 0), s.pos.dot(s.vel), a * a * n * 1e-4);
+    }
+}
+
+test "keplerState ellipse: periapsis to apoapsis, fast to slow" {
+    const a: f32 = 5500;
+    const e: f32 = 0.15;
+    const n: f32 = 0.0027;
+    const peri = keplerState(a, e, n, 0);
+    const apo = keplerState(a, e, n, std.math.pi);
+    try testing.expectApproxEqRel(a * (1 - e), peri.pos.len(), 1e-4);
+    try testing.expectApproxEqRel(a * (1 + e), apo.pos.len(), 1e-4);
+    try testing.expect(peri.vel.len() > apo.vel.len());
+
+    // Kepler's second law: the angular momentum x·vy − y·vx is the same
+    // everywhere on the orbit.
+    const h0 = peri.pos.x * peri.vel.y - peri.pos.y * peri.vel.x;
+    var m: f32 = 0.3;
+    while (m < std.math.tau) : (m += 0.9) {
+        const s = keplerState(a, e, n, m);
+        const h = s.pos.x * s.vel.y - s.pos.y * s.vel.x;
+        try testing.expectApproxEqRel(h0, h, 1e-3);
+    }
+}
+
+test "keplerState velocity matches the derivative of position" {
+    const a: f32 = 1500;
+    const e: f32 = 0.055;
+    const n: f32 = 0.008;
+    const dm: f32 = 1e-3;
+    var m: f32 = 0.1;
+    while (m < std.math.tau) : (m += 1.1) {
+        const s = keplerState(a, e, n, m);
+        const ahead = keplerState(a, e, n, m + dm);
+        const behind = keplerState(a, e, n, m - dm);
+        const dt = 2.0 * dm / n; // central difference over ±dm of mean anomaly
+        try testing.expectApproxEqAbs(s.vel.x, (ahead.pos.x - behind.pos.x) / dt, n * a * 0.01);
+        try testing.expectApproxEqAbs(s.vel.y, (ahead.pos.y - behind.pos.y) / dt, n * a * 0.01);
+    }
 }
 
 test "gravity points toward the planet" {

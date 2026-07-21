@@ -195,31 +195,45 @@ pub const Starfield = struct {
     }
 };
 
-/// Faint ring tracing a body's scripted circular orbit (see `orbits` in
-/// main.zig) around its parent's current position. Drawn under everything
-/// else, so it reads as background structure: the shape of the system at a
-/// glance, and where a planet's path will take it while you fly to it.
+/// Faint line tracing a body's scripted Kepler ellipse (see `orbits` in
+/// main.zig): semi-major axis `a`, eccentricity `e`, periapsis direction
+/// `peri`, with the parent's current position at `focus`. Drawn under
+/// everything else, so it reads as background structure: the shape of the
+/// system at a glance, and where a planet's path will take it while you fly
+/// to it.
 ///
-/// Only drawn while the circle is actually legible on screen — see
+/// Only drawn while the ellipse is actually legible on screen — see
 /// `orbitFade`. Flying around Earth you get the moon's path and nothing else;
 /// zoomed right out you get the heliocentric orbits and not the moon's knot.
-pub fn drawOrbitPath(center: Vec2, radius: f32, body_idx: usize, cam: rl.Camera2D) void {
-    // A path is only worth drawing while it reads *as a circle*, which is a
+pub fn drawOrbitPath(focus: Vec2, a: f32, e: f32, peri: f32, body_idx: usize, cam: rl.Camera2D) void {
+    // A path is only worth drawing while it reads *as an orbit*, which is a
     // question about its size on screen, not in the world. `orbitFade` gives
     // the strength for the current apparent radius; zero means skip it.
-    const r_px = radius * cam.zoom;
+    const r_px = a * cam.zoom;
     const fade = orbitFade(r_px);
     if (fade <= 0) return;
 
-    // Hairline in screen space: a world-thickness ring disappears zoomed out
+    // Hairline in screen space: a world-thickness line disappears zoomed out
     // and swells into a fat band zoomed in.
-    const half = 0.75 / cam.zoom;
+    const thickness = 1.5 / cam.zoom;
     // Segments from the apparent size — a path that fills the window shouldn't
     // read as a polygon, and a small one shouldn't cost hundreds of quads.
-    const segments: i32 = @intFromFloat(std.math.clamp(r_px * 0.5, 48, 512));
+    const segments: usize = @intFromFloat(std.math.clamp(r_px * 0.5, 48, 512));
     var color = edge_colors[body_idx];
     color.a = @intFromFloat(orbit_alpha * fade);
-    rl.drawRing(v(center), radius - half, radius + half, 0, 360, segments, color);
+
+    // The parent sits at a focus, so the ellipse's geometric centre is offset
+    // a·e toward apoapsis; sweep the ellipse in its own frame and rotate out.
+    const minor = a * @sqrt(1 - e * e);
+    const center = focus.add(Vec2.fromAngle(peri).scale(-a * e));
+    var prev: Vec2 = undefined;
+    var s: usize = 0;
+    while (s <= segments) : (s += 1) {
+        const t = std.math.tau * @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(segments));
+        const pt = center.add((Vec2{ .x = a * @cos(t), .y = minor * @sin(t) }).rotated(peri));
+        if (s > 0) rl.drawLineEx(v(prev), v(pt), thickness, color);
+        prev = pt;
+    }
 }
 
 /// Alpha at full strength. Faint on purpose — the paths are there to be
