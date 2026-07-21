@@ -371,16 +371,11 @@ pub fn drawBeltImpacts(ship_pos: Vec2, time: f32) void {
 /// system at a glance, and where a planet's path will take it while you fly
 /// to it.
 ///
-/// Only drawn while the ellipse is actually legible on screen — see
-/// `orbitFade`. Flying around Earth you get the moon's path and nothing else;
-/// zoomed right out you get the heliocentric orbits and not the moon's knot.
+/// Always drawn at the same strength, whatever the zoom: a path that dims and
+/// brightens as you scroll draws the eye to the zooming rather than to the
+/// system, and any zoom level where it looked right made another look wrong.
 pub fn drawOrbitPath(focus: Vec2, a: f32, e: f32, peri: f32, body_idx: usize, cam: rl.Camera2D) void {
-    // A path is only worth drawing while it reads *as an orbit*, which is a
-    // question about its size on screen, not in the world. `orbitFade` gives
-    // the strength for the current apparent radius; zero means skip it.
     const r_px = a * cam.zoom;
-    const fade = orbitFade(r_px);
-    if (fade <= 0) return;
 
     // Hairline in screen space: a world-thickness line disappears zoomed out
     // and swells into a fat band zoomed in.
@@ -389,7 +384,7 @@ pub fn drawOrbitPath(focus: Vec2, a: f32, e: f32, peri: f32, body_idx: usize, ca
     // read as a polygon, and a small one shouldn't cost hundreds of quads.
     const segments: usize = @intFromFloat(std.math.clamp(r_px * 0.5, 48, 512));
     var color = edge_colors[body_idx];
-    color.a = @intFromFloat(orbit_alpha * fade);
+    color.a = orbit_alpha;
 
     // The parent sits at a focus, so the ellipse's geometric centre is offset
     // a·e toward apoapsis; sweep the ellipse in its own frame and rotate out.
@@ -405,31 +400,10 @@ pub fn drawOrbitPath(focus: Vec2, a: f32, e: f32, peri: f32, body_idx: usize, ca
     }
 }
 
-/// Alpha at full strength. Faint on purpose — the paths are there to be
-/// noticed when you look for them, not to compete with the bodies.
-const orbit_alpha: f32 = 42.0;
-/// Apparent radius (screen px) at which a path is an indistinguishable knot
-/// around its parent, and the size it must reach to draw at full strength.
-const orbit_tiny_px: f32 = 55.0;
-const orbit_small_px: f32 = 120.0;
-/// The same two points at the other end, as multiples of the view's
-/// half-diagonal: once the circle is much larger than the window, all that's
-/// on screen is a faintly bent line crossing it, which tells you nothing about
-/// the orbit and just adds clutter to a zoomed-in view.
-const orbit_wide_view: f32 = 1.2;
-const orbit_huge_view: f32 = 2.0;
-
-/// How strongly to draw an orbit whose on-screen radius is `r_px`: 1 inside
-/// the useful band, 0 outside it, ramping between so paths fade in and out as
-/// you zoom rather than popping.
-fn orbitFade(r_px: f32) f32 {
-    const sw: f32 = @floatFromInt(rl.getScreenWidth());
-    const sh: f32 = @floatFromInt(rl.getScreenHeight());
-    const view = @sqrt(sw * sw + sh * sh) / 2.0; // corner-to-centre distance
-    const small = std.math.clamp((r_px - orbit_tiny_px) / (orbit_small_px - orbit_tiny_px), 0, 1);
-    const huge = std.math.clamp((orbit_huge_view * view - r_px) / ((orbit_huge_view - orbit_wide_view) * view), 0, 1);
-    return @min(small, huge);
-}
+/// The one alpha every orbit path is drawn at. Faint on purpose — the paths
+/// are there to be noticed when you look for them, not to compete with the
+/// bodies — but strong enough to read on the zoomed-in black background.
+const orbit_alpha: u8 = 46;
 
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
 /// Each point is stored relative to the SOI body that dominated it when it was
