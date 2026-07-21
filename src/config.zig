@@ -23,11 +23,11 @@ pub const PlanetConfig = struct {
 /// Display name of each body, in the canonical body order used everywhere a
 /// body is looked up by index: the planets array in main.zig, Config.planet,
 /// and render.SpriteSet.body all follow it.
-pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "phobos", "deimos", "io", "europa", "ganymede", "callisto" };
+pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "phobos", "deimos", "io", "europa", "ganymede", "callisto", "pluto", "haumea", "makemake", "eris" };
 
 pub const Config = struct {
     // The sun's SOI must contain every heliocentric orbit (see `orbits` in
-    // main.zig): Neptune tops out near 57000. It reaches far beyond that
+    // main.zig): Eris tops out near 135700. It reaches beyond that
     // (150000) on purpose: crossing it is the point of no return (deep space,
     // zero gravity), so the farther out it sits the closer "reach the edge"
     // is to true escape velocity — one full tank must NOT be enough to leave
@@ -64,6 +64,14 @@ pub const Config = struct {
     europa: PlanetConfig = .{ .mass = 4800, .radius = 31, .soi = 150, .core = 90 },
     ganymede: PlanetConfig = .{ .mass = 7200, .radius = 46, .soi = 200, .core = 110 },
     callisto: PlanetConfig = .{ .mass = 6000, .radius = 42, .soi = 210, .core = 105 },
+    // Kuiper dwarfs, riding eccentric ellipses through the Kuiper belt (see
+    // `orbits` in main.zig). Moon-class lightweights with tight SOI bubbles;
+    // mass/soi stays ≳ 6 so capture assist can still bind the (slow, this far
+    // out) arrivals. Eris outweighs Pluto, as in reality.
+    pluto: PlanetConfig = .{ .mass = 4500, .radius = 45, .soi = 700, .core = 110 },
+    haumea: PlanetConfig = .{ .mass = 3500, .radius = 30, .soi = 550, .core = 90 },
+    makemake: PlanetConfig = .{ .mass = 3200, .radius = 34, .soi = 520, .core = 95 },
+    eris: PlanetConfig = .{ .mass = 4800, .radius = 44, .soi = 720, .core = 110 },
 
     pub fn planet(self: *Config, idx: usize) *PlanetConfig {
         return switch (idx) {
@@ -82,7 +90,11 @@ pub const Config = struct {
             12 => &self.io,
             13 => &self.europa,
             14 => &self.ganymede,
-            else => &self.callisto,
+            15 => &self.callisto,
+            16 => &self.pluto,
+            17 => &self.haumea,
+            18 => &self.makemake,
+            else => &self.eris,
         };
     }
 
@@ -109,7 +121,7 @@ pub const Config = struct {
 
     pub fn save(self: Config) !void {
         if (is_web) return;
-        var buf: [2048]u8 = undefined;
+        var buf: [4096]u8 = undefined;
         var w = std.Io.Writer.fixed(&buf);
         try std.zon.stringify.serialize(self, .{}, &w);
         try w.writeByte('\n');

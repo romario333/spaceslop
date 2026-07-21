@@ -24,10 +24,12 @@ const is_web = builtin.target.os.tag == .emscripten;
 const screen_w = 1000;
 const screen_h = 700;
 
-// Belt rock arrays — file scope, not run()'s stack: ~130 KB of colliders
-// plus ~450 KB of outlines would be a big bite out of the wasm stack.
-var belt_rocks: [sim.Belt.rock_count]sim.Belt.Rock = undefined;
+// Belt rock arrays — file scope, not run()'s stack: ~240 KB of colliders
+// plus ~850 KB of outlines would be a big bite out of the wasm stack.
+var belt_rocks: [sim.Belt.Band.asteroid.count]sim.Belt.Rock = undefined;
 var belt_visuals: render.AsteroidBelt = undefined;
+var kuiper_rocks: [sim.Belt.Band.kuiper.count]sim.Belt.Rock = undefined;
+var kuiper_visuals: render.KuiperBelt = undefined;
 
 /// Index of Earth in the canonical body order (see cfg.names); the ship
 /// spawns there and the ISS orbits it.
@@ -86,6 +88,20 @@ const orbits = [_]?Orbit{
     .{ .parent = 6, .semi_major = 1480, .omega = 0.0104, .phase = 2.8, .ecc = 0.009, .peri = 1.00 }, // europa
     .{ .parent = 6, .semi_major = 2360, .omega = 0.0052, .phase = 5.1, .ecc = 0.001, .peri = 3.30 }, // ganymede
     .{ .parent = 6, .semi_major = 4150, .omega = 0.0022, .phase = 1.9, .ecc = 0.007, .peri = 5.80 }, // callisto
+    // Kuiper dwarfs: visibly eccentric ellipses wandering through the Kuiper
+    // belt (see sim.Belt.Band.kuiper), mean motions on the same arcade Kepler
+    // curve as the planets. Eccentricities are the real ones where they fit;
+    // Pluto (real e=0.25) and Eris (0.44) are capped like Mercury and Mars,
+    // pushed out so their periapsides clear Neptune's apoapsis-plus-SOI
+    // (~57000) — real Pluto dips inside Neptune's orbit, but patched conics
+    // want clear water between planet-sized SOIs. The dwarfs' own bands
+    // overlap each other, as in reality; their SOI bubbles are so small that
+    // a dwarf–dwarf close approach is a non-event. Periapsis directions are
+    // the real longitudes of perihelion.
+    .{ .parent = 0, .semi_major = 68000, .omega = 0.000063, .phase = 2.5, .ecc = 0.14, .peri = 3.91 }, // pluto
+    .{ .parent = 0, .semi_major = 73000, .omega = 0.000056, .phase = 5.6, .ecc = 0.19, .peri = 0.02 }, // haumea
+    .{ .parent = 0, .semi_major = 77500, .omega = 0.000052, .phase = 1.1, .ecc = 0.16, .peri = 0.25 }, // makemake
+    .{ .parent = 0, .semi_major = 100000, .omega = 0.000035, .phase = 3.8, .ecc = 0.35, .peri = 3.27 }, // eris
 };
 
 comptime {
@@ -217,16 +233,19 @@ fn run(init: std.process.Init.Minimal) !void {
     for (orbits, 0..) |o, i| angles[i] = if (o) |orb| orb.phase else 0;
     updateOrbits(&planets, &angles, 0); // place every body before the first frame
 
-    // The belt's rocks are real colliders in the sim; the render layer rolls
+    // The belts' rocks are real colliders in the sim; the render layer rolls
     // its cosmetic attributes (shape, tint, tumble) from a separate stream,
     // index-aligned with the same array.
-    sim.Belt.fillRocks(&belt_rocks, 0xA57E_401D);
+    sim.Belt.fillRocks(&belt_rocks, 0xA57E_401D, .asteroid);
     belt_visuals.init(0x0C_407E5);
+    sim.Belt.fillRocks(&kuiper_rocks, 0x1CE_BE17, .kuiper);
+    kuiper_visuals.init(0x1CE_407E5);
 
     var world: sim.World = .{
         .planets = &planets,
         .ship = shipStart(planets[earth_idx]),
         .belt = .{ .rocks = &belt_rocks },
+        .kuiper = .{ .band = .kuiper, .rocks = &kuiper_rocks },
     };
 
     // Decorative ISS on a low circular orbit around the primary planet. It
@@ -332,9 +351,9 @@ fn run(init: std.process.Init.Minimal) !void {
         // Keep the camera centred on the current window size.
         const wheel = in.wheel;
         if (in.zoom_modifier) {
-            // Floor fits the whole system: Neptune orbits at r=53500 plus
-            // its SOI, so ~113000 units across; 0.008 shows that in one window.
-            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.008, 4.0);
+            // Floor fits the whole system: Eris tops out near r=135700 plus
+            // its SOI, so ~273000 units across; 0.0035 shows that in one window.
+            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.0035, 4.0);
         } else if (wheel.x != 0 or wheel.y != 0) {
             // Content follows the fingers: a wheel unit moves the view a
             // fixed number of screen px regardless of zoom.
@@ -413,6 +432,7 @@ fn run(init: std.process.Init.Minimal) !void {
             // Under the planets: a rock passing behind Jupiter should occlude
             // like the background object it is.
             if (world.belt) |*b| belt_visuals.draw(b, planets[0].pos, cam);
+            if (world.kuiper) |*b| kuiper_visuals.draw(b, planets[0].pos, cam);
 
             const sprites: ?*const SpriteSet = switch (theme) {
                 .pixelart => &sprite_sets[0],
@@ -434,8 +454,12 @@ fn run(init: std.process.Init.Minimal) !void {
                 // each so the sprite spans the body's current physics diameter
                 // — that keeps the detail panel's `size` slider honest.
                 for (planets, 0..) |p, i| {
-                    const tex = s.body(i);
-                    s.drawSprite(tex, p.pos, 0, render.spriteScale(s, tex, p.radius));
+                    if (s.body(i)) |tex| {
+                        s.drawSprite(tex, p.pos, 0, render.spriteScale(s, tex, p.radius));
+                    } else {
+                        // No art yet (the Kuiper dwarfs): tinted stand-in disc.
+                        render.drawPlaceholderBody(p.pos, p.radius, i);
+                    }
                 }
             } else {
                 for (planets) |p| {
