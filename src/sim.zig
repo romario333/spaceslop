@@ -180,7 +180,10 @@ pub const World = struct {
     /// Gameplay gravitational constant — tuned for pixels, not real-world units.
     /// Kept low so orbital speeds stay arcade-slow and steerable.
     pub const g: f32 = 1200.0;
-    /// Engine acceleration while thrusting, in px/s².
+    /// Engine acceleration while thrusting, in px/s². A full-tank burn at
+    /// this accel lasts ~1.8 s against a ~13 s spawn-orbit period, short
+    /// enough that burns stay near-impulsive — long burns leak delta-v to
+    /// gravity losses and would silently eat the Mars budget.
     pub const thrust_accel: f32 = 70.0;
     /// Turn speed in radians/second.
     pub const turn_rate: f32 = 2.8;
@@ -194,13 +197,16 @@ pub const World = struct {
     pub const capture_zone: f32 = 0.6;
     /// Propellant burned per second by each firing thruster — the main
     /// engine and the retro pair each cost this, so holding both burns
-    /// double. Tuned so a full tank is ~2.9 s of single-thruster burn:
-    /// 200 px/s of delta-v against ~85 px/s for a perfectly-flown
-    /// Earth-to-Mars transfer (measured: a steered prograde Oberth escape
-    /// burn from the spawn orbit onto a Mars-crossing ellipse takes ~1.2 s
-    /// of thrust; capture assist handles arrival). Careful piloting reaches
-    /// Mars with a thin reserve; sloppy burns or farther targets run dry.
-    pub const fuel_burn: f32 = 35.0;
+    /// double. A full tank is ~1.8 s of single-thruster burn: ~127 px/s of
+    /// delta-v, sized to fit between the system's landmark costs (measured
+    /// via the debug bridge, steered prograde burns from the spawn orbit):
+    /// a Mars-crossing ellipse takes ~90 px/s (capture assist handles
+    /// arrival), Saturn ~118, Uranus ~127 — right at the tank's edge — and
+    /// a full tank flown perfectly coasts out to only ~72000 px of the
+    /// sun's 150000 px SOI before falling back, ~10 px/s short at SOI exit.
+    /// Inner planets through Saturn are reachable one-way with reserve, but
+    /// no single tank escapes the system (gravity assists notwithstanding).
+    pub const fuel_burn: f32 = 55.0;
 
     planets: []const Planet,
     ship: Ship,
