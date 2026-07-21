@@ -95,10 +95,16 @@ pub const Planet = struct {
 };
 
 pub const Ship = struct {
+    /// Tank capacity, in fuel units.
+    pub const max_fuel: f32 = 100.0;
+
     pos: Vec2,
     vel: Vec2,
     /// Facing direction in radians; thrust pushes along this heading.
     angle: f32 = 0,
+    /// Propellant left in the tank. Each firing thruster burns
+    /// `World.fuel_burn` per second; at zero the engines cut out.
+    fuel: f32 = max_fuel,
     thrusting: bool = false,
     /// Retro thrusters firing: the pair of small nose thrusters that push
     /// the ship backwards along its heading.
@@ -186,6 +192,15 @@ pub const World = struct {
     /// Capture drag only acts beyond this fraction of the SOI radius, so
     /// parked orbits deeper inside feel nothing and never decay.
     pub const capture_zone: f32 = 0.6;
+    /// Propellant burned per second by each firing thruster — the main
+    /// engine and the retro pair each cost this, so holding both burns
+    /// double. Tuned so a full tank is ~2.9 s of single-thruster burn:
+    /// 200 px/s of delta-v against ~85 px/s for a perfectly-flown
+    /// Earth-to-Mars transfer (measured: a steered prograde Oberth escape
+    /// burn from the spawn orbit onto a Mars-crossing ellipse takes ~1.2 s
+    /// of thrust; capture assist handles arrival). Careful piloting reaches
+    /// Mars with a thin reserve; sloppy burns or farther targets run dry.
+    pub const fuel_burn: f32 = 35.0;
 
     planets: []const Planet,
     ship: Ship,
@@ -267,15 +282,22 @@ pub const World = struct {
                 }
             }
         }
-        self.ship.thrusting = input.thrust;
-        self.ship.braking = input.brake;
-        if (input.thrust) {
+        // Thrusters only fire with propellant in the tank. The flags track
+        // what actually fires, so engine flames die with the fuel.
+        const has_fuel = self.ship.fuel > 0;
+        self.ship.thrusting = input.thrust and has_fuel;
+        self.ship.braking = input.brake and has_fuel;
+        var burn: f32 = 0;
+        if (self.ship.thrusting) {
             acc = acc.add(Vec2.fromAngle(self.ship.angle).scale(thrust_accel));
+            burn += fuel_burn;
         }
         // Two small nose thrusters, same total power as the main engine.
-        if (input.brake) {
+        if (self.ship.braking) {
             acc = acc.add(Vec2.fromAngle(self.ship.angle).scale(-thrust_accel));
+            burn += fuel_burn;
         }
+        self.ship.fuel = @max(0, self.ship.fuel - burn * dt);
 
         self.ship.vel = self.ship.vel.add(acc.scale(dt)); // velocity first...
         self.ship.pos = self.ship.pos.add(self.ship.vel.scale(dt)); // ...then position
@@ -556,4 +578,34 @@ test "flare damage clamps health at zero" {
     world.triggerFlare(0);
     stepFor(&world, 4.0);
     try testing.expectEqual(@as(f32, 0), world.ship.health);
+}
+
+test "each firing thruster burns fuel; both together burn double" {
+    var one: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
+    one.step(0.1, .{ .thrust = true });
+    try testing.expectApproxEqRel(Ship.max_fuel - World.fuel_burn * 0.1, one.ship.fuel, 1e-5);
+
+    var both: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
+    both.step(0.1, .{ .thrust = true, .brake = true });
+    try testing.expectApproxEqRel(Ship.max_fuel - 2.0 * World.fuel_burn * 0.1, both.ship.fuel, 1e-5);
+
+    // Coasting is free.
+    var coast: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
+    coast.step(0.1, .{ .turn = 1 });
+    try testing.expectEqual(Ship.max_fuel, coast.ship.fuel);
+}
+
+test "empty tank kills thrust and never goes negative" {
+    // Almost-dry tank: the last sliver burns away and clamps at exactly zero.
+    var world: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{}, .fuel = 0.01 } };
+    world.step(0.1, .{ .thrust = true });
+    try testing.expectEqual(@as(f32, 0), world.ship.fuel);
+
+    // Dry: engines refuse to fire and the ship keeps coasting unchanged.
+    const vel_before = world.ship.vel;
+    world.step(0.1, .{ .thrust = true, .brake = true });
+    try testing.expect(!world.ship.thrusting);
+    try testing.expect(!world.ship.braking);
+    try testing.expectEqual(vel_before.x, world.ship.vel.x);
+    try testing.expectEqual(vel_before.y, world.ship.vel.y);
 }

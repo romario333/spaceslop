@@ -697,21 +697,61 @@ pub fn drawHoverLabel(idx: usize, mouse: rl.Vector2) void {
 
 var hud_buf: [192]u8 = undefined;
 
+const hud_y = 34;
+const hud_font = 20;
+const hud_gap = 26; // space between status columns, in px
+const hud_color: rl.Color = .{ .r = 200, .g = 220, .b = 240, .a = 255 };
+/// Fuel readout turns amber below this, to nudge you toward planning a
+/// return or a cheaper route while there's still fuel to do it with.
+const fuel_warn = 50.0;
+/// ...and red below this, where only a short trim burn is left.
+const fuel_low = 20.0;
+
+/// Draw one status-line column and advance `x` past it. The column is as
+/// wide as `widest` — the longest string this field can ever hold — so a
+/// value that gains a digit (speed ticking past 999, a longer SOI name)
+/// grows into its own slack instead of shoving every later field sideways.
+fn hudColumn(x: *i32, text: [:0]const u8, widest: [:0]const u8, color: rl.Color) void {
+    rl.drawText(text, x.*, hud_y, hud_font, color);
+    x.* += rl.measureText(widest, hud_font) + hud_gap;
+}
+
 pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     const ship = world.ship;
     const speed = ship.vel.len();
-    // Altitude above the surface of whichever body's SOI the ship is in;
-    // relative to the sun when coasting through gravity-free deep space.
     const soi_idx = world.dominantIndex(ship.pos);
     const soi_name: [:0]const u8 = if (soi_idx) |i| cfg.names[i] else "deep space";
-    const soi_body = world.planets[soi_idx orelse 0];
-    const altitude = ship.pos.sub(soi_body.pos).len() - soi_body.radius;
 
     rl.drawFPS(10, 10);
 
     const follow: [:0]const u8 = if (followed) |i| cfg.names[i] else "ship";
-    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "hull: {d:.0}   speed: {d:.1}   altitude: {d:.0}   soi: {s}   theme: {s}   follow: {s}", .{ ship.health, speed, altitude, soi_name, theme.label(), follow }) catch "";
-    rl.drawText(speed_txt, 10, 34, 20, .{ .r = 200, .g = 220, .b = 240, .a = 255 });
+    var x: i32 = 10;
+
+    // Each column formats into the shared buffer and is drawn before the
+    // next one reuses it.
+    const hull_txt = std.fmt.bufPrintZ(&hud_buf, "hull: {d:.0}", .{ship.health}) catch "";
+    hudColumn(&x, hull_txt, "hull: 100", hud_color);
+
+    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}", .{speed}) catch "";
+    hudColumn(&x, speed_txt, "speed: 99999.9", hud_color);
+
+    const fuel_color: rl.Color = if (ship.fuel < fuel_low)
+        .{ .r = 255, .g = 90, .b = 80, .a = 255 }
+    else if (ship.fuel < fuel_warn)
+        .{ .r = 255, .g = 190, .b = 70, .a = 255 }
+    else
+        hud_color;
+    const fuel_txt = std.fmt.bufPrintZ(&hud_buf, "fuel: {d:.0}/{d:.0}", .{ ship.fuel, sim.Ship.max_fuel }) catch "";
+    hudColumn(&x, fuel_txt, "fuel: 100/100", fuel_color);
+
+    const soi_txt = std.fmt.bufPrintZ(&hud_buf, "soi: {s}", .{soi_name}) catch "";
+    hudColumn(&x, soi_txt, "soi: deep space", hud_color);
+
+    const theme_txt = std.fmt.bufPrintZ(&hud_buf, "theme: {s}", .{theme.label()}) catch "";
+    hudColumn(&x, theme_txt, "theme: scifi-60s", hud_color);
+
+    const follow_txt = std.fmt.bufPrintZ(&hud_buf, "follow: {s}", .{follow}) catch "";
+    hudColumn(&x, follow_txt, "follow: deep space", hud_color);
 
     const controls = if (is_web)
         "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   click a planet: details + follow it"

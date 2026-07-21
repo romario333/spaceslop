@@ -305,6 +305,8 @@ fn run(init: std.process.Init.Minimal) !void {
             trail.clear();
             pan_offset = .{};
         }
+        // Debug convenience: top the tank back up without resetting the orbit.
+        if (in.refuel) world.ship.fuel = sim.Ship.max_fuel;
         if (!is_web and in.fullscreen) rl.toggleFullscreen();
         if (in.cycle_theme) theme = theme.next();
         if (in.toggle_soi) show_soi = !show_soi;
