@@ -299,7 +299,7 @@ fn run(init: std.process.Init.Minimal) !void {
             // updateOrbits and sim.Planet.acc).
             updateOrbits(&planets, &angles, fixed_dt);
             world.step(fixed_dt, sim_input);
-            trail.push(world.ship.pos);
+            trail.push(world.ship.pos, &world);
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
             dbg.step_count += 1;
         }
@@ -323,7 +323,7 @@ fn run(init: std.process.Init.Minimal) !void {
 
             stars.draw(cam);
 
-            trail.draw();
+            trail.draw(&planets);
 
             const sprites: ?*const SpriteSet = switch (theme) {
                 .pixelart => &sprite_sets[0],

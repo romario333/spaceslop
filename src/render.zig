@@ -184,14 +184,50 @@ pub const Starfield = struct {
 };
 
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
+/// Each point is stored relative to the SOI body that dominated it when it was
+/// recorded (absolute when in deep space), so the trail rides along with the
+/// moving planet instead of being left behind in world space. Points keep
+/// their anchor forever, so crossing an SOI boundary never snaps the trail.
+/// In the outer band of an SOI a point is stored in the enclosing frame too
+/// and the two are blended, so the seam deforms as a smooth curve instead of
+/// kinking at the segment where the anchor switches.
 pub const Trail = struct {
     const cap = 4000;
-    points: [cap]Vec2 = undefined,
+    /// Fraction of the SOI radius where blending toward the enclosing frame
+    /// begins; at the edge itself a point rides the enclosing frame entirely,
+    /// which matches the first point recorded on the other side.
+    const blend_band = 0.8;
+
+    const Point = struct {
+        /// Offset from the anchor body (absolute position when anchor is null).
+        off: Vec2,
+        /// Offset from the enclosing body (absolute when enclosing is null).
+        off_outer: Vec2,
+        anchor: ?usize,
+        enclosing: ?usize,
+        /// 1 = fully anchor frame, 0 = fully enclosing frame.
+        blend: f32,
+    };
+
+    points: [cap]Point = undefined,
     head: usize = 0,
     len: usize = 0,
 
-    pub fn push(self: *Trail, p: Vec2) void {
-        self.points[self.head] = p;
+    pub fn push(self: *Trail, p: Vec2, world: *const sim.World) void {
+        var pt = Point{ .off = p, .off_outer = p, .anchor = null, .enclosing = null, .blend = 1 };
+        if (world.dominantIndex(p)) |a| {
+            const body = world.planets[a];
+            pt.anchor = a;
+            pt.off = p.sub(body.pos);
+            const edge = p.sub(body.pos).len() / body.soi;
+            const raw = std.math.clamp((1.0 - edge) / (1.0 - blend_band), 0.0, 1.0);
+            pt.blend = raw * raw * (3.0 - 2.0 * raw);
+            if (pt.blend < 1.0) {
+                pt.enclosing = world.enclosingIndex(p, a);
+                if (pt.enclosing) |e| pt.off_outer = p.sub(world.planets[e].pos);
+            }
+        }
+        self.points[self.head] = pt;
         self.head = (self.head + 1) % cap;
         if (self.len < cap) self.len += 1;
     }
@@ -201,16 +237,26 @@ pub const Trail = struct {
         self.len = 0;
     }
 
-    pub fn draw(self: *const Trail) void {
+    fn worldPos(self: *const Trail, idx: usize, planets: []const sim.Planet) Vec2 {
+        const pt = self.points[idx];
+        const inner = if (pt.anchor) |a| planets[a].pos.add(pt.off) else pt.off;
+        if (pt.blend >= 1.0) return inner;
+        const outer = if (pt.enclosing) |e| planets[e].pos.add(pt.off_outer) else pt.off_outer;
+        return outer.add(inner.sub(outer).scale(pt.blend));
+    }
+
+    pub fn draw(self: *const Trail, planets: []const sim.Planet) void {
         if (self.len < 2) return;
         var i: usize = 1;
+        var a = self.worldPos((self.head + cap - self.len) % cap, planets);
         while (i < self.len) : (i += 1) {
             // Walk from oldest to newest so alpha ramps up along the tail.
-            const a_idx = (self.head + cap - self.len + i - 1) % cap;
             const b_idx = (self.head + cap - self.len + i) % cap;
+            const b = self.worldPos(b_idx, planets);
             const t: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(self.len));
             const alpha: u8 = @intFromFloat(t * 160.0);
-            rl.drawLineV(v(self.points[a_idx]), v(self.points[b_idx]), .{ .r = 120, .g = 200, .b = 255, .a = alpha });
+            rl.drawLineV(v(a), v(b), .{ .r = 120, .g = 200, .b = 255, .a = alpha });
+            a = b;
         }
     }
 };
