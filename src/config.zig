@@ -23,15 +23,22 @@ pub const PlanetConfig = struct {
 /// Display name of each body, in the canonical body order used everywhere a
 /// body is looked up by index: the planets array in main.zig, Config.planet,
 /// and render.SpriteSet.body all follow it.
-pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars" };
+pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune" };
 
 pub const Config = struct {
-    sun: PlanetConfig = .{ .mass = 100000, .radius = 600, .soi = 26000 },
+    // The sun's SOI must contain every heliocentric orbit (see `orbits` in
+    // main.zig): Neptune tops out near 57000, so 60000 keeps the whole system
+    // inside the sun's gravity with deep space beyond it.
+    sun: PlanetConfig = .{ .mass = 100000, .radius = 600, .soi = 60000 },
     mercury: PlanetConfig = .{ .mass = 2500, .radius = 50, .soi = 900, .core = 90 },
     venus: PlanetConfig = .{ .mass = 7000, .radius = 130, .soi = 2000, .core = 145 },
     earth: PlanetConfig = .{ .mass = 8000, .radius = 140, .soi = 2500 },
     moon: PlanetConfig = .{ .mass = 4000, .radius = 40, .soi = 770, .core = 110 },
     mars: PlanetConfig = .{ .mass = 4000, .radius = 80, .soi = 1500, .core = 110 },
+    jupiter: PlanetConfig = .{ .mass = 30000, .radius = 300, .soi = 5000 },
+    saturn: PlanetConfig = .{ .mass = 22000, .radius = 250, .soi = 4200 },
+    uranus: PlanetConfig = .{ .mass = 12000, .radius = 180, .soi = 3200 },
+    neptune: PlanetConfig = .{ .mass = 13000, .radius = 175, .soi = 3200 },
 
     pub fn planet(self: *Config, idx: usize) *PlanetConfig {
         return switch (idx) {
@@ -40,7 +47,11 @@ pub const Config = struct {
             2 => &self.venus,
             3 => &self.earth,
             4 => &self.moon,
-            else => &self.mars,
+            5 => &self.mars,
+            6 => &self.jupiter,
+            7 => &self.saturn,
+            8 => &self.uranus,
+            else => &self.neptune,
         };
     }
 
