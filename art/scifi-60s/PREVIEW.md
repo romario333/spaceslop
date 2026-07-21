@@ -6,6 +6,10 @@ mars.png — 280 px vintage ink-and-print Mars, disc fills the canvas edge-to-ed
 venus.png — 280 px vintage ink-and-print Venus, disc fills the canvas edge-to-edge, transparent.
 mercury.png — 280 px vintage ink-and-print Mercury, disc fills the canvas edge-to-edge, transparent.
 sun.png — 280 px vintage ink-and-print Sun, disc fills the canvas edge-to-edge, transparent.
+jupiter.png — 280 px vintage ink-and-print Jupiter, disc fills the canvas edge-to-edge, transparent.
+saturn.png — 280 px vintage ink-and-print Saturn with rings spanning the canvas; intentional vertical transparency preserves ring proportions (exception to zero-padding rule).
+uranus.png — 280 px vintage ink-and-print Uranus, disc fills the canvas edge-to-edge, transparent.
+neptune.png — 280 px vintage ink-and-print Neptune, disc fills the canvas edge-to-edge, transparent.
 
 Note: planet discs were mechanically trimmed and rescaled (bilinear) to fill
 their canvases per the zero-padding rule; ship/ISS were trimmed only.
