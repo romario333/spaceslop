@@ -28,28 +28,44 @@ const screen_h = 700;
 /// spawns there and the ISS orbits it.
 const earth_idx = 3;
 
-const Orbit = struct { parent: usize, radius: f32, omega: f32, phase: f32 };
+const Orbit = struct {
+    parent: usize,
+    /// Semi-major axis in world px.
+    semi_major: f32,
+    /// Mean motion: average angular rate over one revolution, rad/s.
+    omega: f32,
+    /// Mean anomaly at t = 0 — where along the orbit the body starts.
+    phase: f32,
+    /// Eccentricity of the ellipse; the parent sits at a focus, not the centre.
+    ecc: f32,
+    /// Argument of periapsis: world angle of the closest-approach direction.
+    peri: f32,
+};
 
-/// Scripted circular orbit of each body, index-aligned with the planets array
+/// Scripted Kepler ellipse of each body, index-aligned with the planets array
 /// (null = the sun, which sits still at the origin). Parents must precede
 /// their children so updateOrbits reads fresh parent state within one pass.
-/// Angular speeds are ~10% of the physically correct rate for each altitude —
+/// Mean motions are ~10% of the physically correct rate for each altitude —
 /// the same arcade slowdown the moon always had, keeping Keplerian ordering
 /// (inner planets visibly outpace outer ones) while an SOI never outruns a
-/// ship trying to get captured. Orbit radii leave clear water between
-/// neighbouring SOIs (e.g. Venus tops out at 11500 from the sun, Earth's
-/// begins at 12000) so patched conics stay unambiguous.
+/// ship trying to get captured. Eccentricities are the real ones where they
+/// fit, capped where this compressed system lacks the room (real Mercury is
+/// e=0.21, real Mars 0.09; the giants sit far too close together here for
+/// their true values): each body's apoapsis-plus-SOI must leave clear water
+/// before the next body's periapsis-minus-SOI (e.g. Venus tops out at 11565
+/// from the sun, Earth's band begins at 11758) so patched conics stay
+/// unambiguous. Periapsis directions are the real longitudes of perihelion.
 const orbits = [_]?Orbit{
     null, // sun
-    .{ .parent = 0, .radius = 5500, .omega = 0.0027, .phase = 2.0 }, // mercury
-    .{ .parent = 0, .radius = 9500, .omega = 0.0012, .phase = 4.2 }, // venus
-    .{ .parent = 0, .radius = 14500, .omega = 0.0006, .phase = 0.0 }, // earth
-    .{ .parent = earth_idx, .radius = 1500, .omega = 0.008, .phase = -0.4 }, // moon
-    .{ .parent = 0, .radius = 20000, .omega = 0.0004, .phase = 5.3 }, // mars
-    .{ .parent = 0, .radius = 28000, .omega = 0.00024, .phase = 1.2 }, // jupiter
-    .{ .parent = 0, .radius = 38500, .omega = 0.00015, .phase = 3.6 }, // saturn
-    .{ .parent = 0, .radius = 46500, .omega = 0.00011, .phase = 0.9 }, // uranus
-    .{ .parent = 0, .radius = 53500, .omega = 0.00009, .phase = 4.8 }, // neptune
+    .{ .parent = 0, .semi_major = 5500, .omega = 0.0027, .phase = 2.0, .ecc = 0.15, .peri = 1.35 }, // mercury
+    .{ .parent = 0, .semi_major = 9500, .omega = 0.0012, .phase = 4.2, .ecc = 0.007, .peri = 2.30 }, // venus
+    .{ .parent = 0, .semi_major = 14500, .omega = 0.0006, .phase = 0.0, .ecc = 0.017, .peri = 1.80 }, // earth
+    .{ .parent = earth_idx, .semi_major = 1500, .omega = 0.008, .phase = -0.4, .ecc = 0.055, .peri = 5.55 }, // moon
+    .{ .parent = 0, .semi_major = 20000, .omega = 0.0004, .phase = 5.3, .ecc = 0.05, .peri = 5.87 }, // mars
+    .{ .parent = 0, .semi_major = 28000, .omega = 0.00024, .phase = 1.2, .ecc = 0.012, .peri = 0.26 }, // jupiter
+    .{ .parent = 0, .semi_major = 38500, .omega = 0.00015, .phase = 3.6, .ecc = 0.007, .peri = 1.61 }, // saturn
+    .{ .parent = 0, .semi_major = 46500, .omega = 0.00011, .phase = 0.9, .ecc = 0.003, .peri = 2.98 }, // uranus
+    .{ .parent = 0, .semi_major = 53500, .omega = 0.00009, .phase = 4.8, .ecc = 0.005, .peri = 0.79 }, // neptune
 };
 
 comptime {
@@ -57,19 +73,26 @@ comptime {
 }
 
 /// Advance every scripted orbit by `dt` and refresh each body's kinematic
-/// state: position on its circle, world velocity, and frame acceleration
-/// (the parent's acceleration plus this body's own centripetal term). The
+/// state: position on its ellipse, world velocity, and frame acceleration
+/// (the parent's acceleration plus the Kepler pull toward it). The
 /// acceleration is what lets ships inside a moving SOI ride along with the
-/// body (see sim.Planet.acc).
+/// body (see sim.Planet.acc). `angles` holds each body's mean anomaly, which
+/// grows uniformly; keplerState turns it into the unevenly-paced true motion.
 fn updateOrbits(planets: []sim.Planet, angles: []f32, dt: f32) void {
     for (orbits, 0..) |maybe_orbit, i| {
         const o = maybe_orbit orelse continue;
         angles[i] = @mod(angles[i] + o.omega * dt, std.math.tau);
         const parent = planets[o.parent];
-        const dir = Vec2.fromAngle(angles[i]);
-        planets[i].pos = parent.pos.add(dir.scale(o.radius));
-        planets[i].vel = parent.vel.add((Vec2{ .x = -dir.y, .y = dir.x }).scale(o.omega * o.radius));
-        planets[i].acc = parent.acc.add(dir.scale(-o.omega * o.omega * o.radius));
+        const local = sim.keplerState(o.semi_major, o.ecc, o.omega, angles[i]);
+        const rel = local.pos.rotated(o.peri);
+        planets[i].pos = parent.pos.add(rel);
+        planets[i].vel = parent.vel.add(local.vel.rotated(o.peri));
+        // Exact gravitational acceleration of the scripted ellipse: toward
+        // the focus with μ = n²a³ (Kepler's third law), so riding ships see
+        // a consistent frame at periapsis and apoapsis alike.
+        const dist = rel.len();
+        const mu = o.omega * o.omega * o.semi_major * o.semi_major * o.semi_major;
+        planets[i].acc = parent.acc.add(rel.scale(-mu / (dist * dist * dist)));
     }
 }
 
@@ -154,7 +177,8 @@ fn run(init: std.process.Init.Minimal) !void {
     // whose innermost sphere of influence contains the ship pulls on it, so
     // orbits around every body are clean stable ellipses. The whole system is
     // scripted kinematics — the sun sits at the origin, Mercury through
-    // Neptune circle it, the moon circles Earth (see `orbits`) — and each body's SOI
+    // Neptune ride Kepler ellipses around it, the moon around Earth (see
+    // `orbits`) — and each body's SOI
     // travels with it. Bodies are small on screen but pull hard: deep wells
     // inside tight SOI bubbles, plus the sim's capture assist, mean a ship
     // that coasts in slowly settles into orbit on its own, while fast flybys
@@ -307,7 +331,7 @@ fn run(init: std.process.Init.Minimal) !void {
 
         // Advance physics in fixed steps (count decided above).
         while (steps > 0) : (steps -= 1) {
-            // All bodies are kinematic: they move on fixed circles and the
+            // All bodies are kinematic: they move on fixed ellipses and the
             // ship physics just sees their updated positions each step (see
             // updateOrbits and sim.Planet.acc).
             updateOrbits(&planets, &angles, fixed_dt);
@@ -336,11 +360,11 @@ fn run(init: std.process.Init.Minimal) !void {
 
             stars.draw(cam);
 
-            // Every body moves on a fixed circle around its parent, so its
-            // path is that circle drawn where the parent is right now.
+            // Every body moves on a fixed ellipse around its parent, so its
+            // path is that ellipse drawn where the parent is right now.
             for (orbits, 0..) |maybe_orbit, i| {
                 const o = maybe_orbit orelse continue;
-                render.drawOrbitPath(planets[o.parent].pos, o.radius, i, cam);
+                render.drawOrbitPath(planets[o.parent].pos, o.semi_major, o.ecc, o.peri, i, cam);
             }
 
             trail.draw(&planets);
