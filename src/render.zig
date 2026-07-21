@@ -183,6 +183,59 @@ pub const Starfield = struct {
     }
 };
 
+/// Faint ring tracing a body's scripted circular orbit (see `orbits` in
+/// main.zig) around its parent's current position. Drawn under everything
+/// else, so it reads as background structure: the shape of the system at a
+/// glance, and where a planet's path will take it while you fly to it.
+///
+/// Only drawn while the circle is actually legible on screen — see
+/// `orbitFade`. Flying around Earth you get the moon's path and nothing else;
+/// zoomed right out you get the heliocentric orbits and not the moon's knot.
+pub fn drawOrbitPath(center: Vec2, radius: f32, body_idx: usize, cam: rl.Camera2D) void {
+    // A path is only worth drawing while it reads *as a circle*, which is a
+    // question about its size on screen, not in the world. `orbitFade` gives
+    // the strength for the current apparent radius; zero means skip it.
+    const r_px = radius * cam.zoom;
+    const fade = orbitFade(r_px);
+    if (fade <= 0) return;
+
+    // Hairline in screen space: a world-thickness ring disappears zoomed out
+    // and swells into a fat band zoomed in.
+    const half = 0.75 / cam.zoom;
+    // Segments from the apparent size — a path that fills the window shouldn't
+    // read as a polygon, and a small one shouldn't cost hundreds of quads.
+    const segments: i32 = @intFromFloat(std.math.clamp(r_px * 0.5, 48, 512));
+    var color = edge_colors[body_idx];
+    color.a = @intFromFloat(orbit_alpha * fade);
+    rl.drawRing(v(center), radius - half, radius + half, 0, 360, segments, color);
+}
+
+/// Alpha at full strength. Faint on purpose — the paths are there to be
+/// noticed when you look for them, not to compete with the bodies.
+const orbit_alpha: f32 = 42.0;
+/// Apparent radius (screen px) at which a path is an indistinguishable knot
+/// around its parent, and the size it must reach to draw at full strength.
+const orbit_tiny_px: f32 = 55.0;
+const orbit_small_px: f32 = 120.0;
+/// The same two points at the other end, as multiples of the view's
+/// half-diagonal: once the circle is much larger than the window, all that's
+/// on screen is a faintly bent line crossing it, which tells you nothing about
+/// the orbit and just adds clutter to a zoomed-in view.
+const orbit_wide_view: f32 = 1.2;
+const orbit_huge_view: f32 = 2.0;
+
+/// How strongly to draw an orbit whose on-screen radius is `r_px`: 1 inside
+/// the useful band, 0 outside it, ramping between so paths fade in and out as
+/// you zoom rather than popping.
+fn orbitFade(r_px: f32) f32 {
+    const sw: f32 = @floatFromInt(rl.getScreenWidth());
+    const sh: f32 = @floatFromInt(rl.getScreenHeight());
+    const view = @sqrt(sw * sw + sh * sh) / 2.0; // corner-to-centre distance
+    const small = std.math.clamp((r_px - orbit_tiny_px) / (orbit_small_px - orbit_tiny_px), 0, 1);
+    const huge = std.math.clamp((orbit_huge_view * view - r_px) / ((orbit_huge_view - orbit_wide_view) * view), 0, 1);
+    return @min(small, huge);
+}
+
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
 /// Each point is stored relative to the SOI body that dominated it when it was
 /// recorded (absolute when in deep space), so the trail rides along with the
@@ -324,8 +377,9 @@ const edge_inset_bottom: f32 = 44.0;
 const edge_arrow_size: f32 = 9.0;
 const edge_label_size: i32 = 14;
 
-/// Arrow tint per body — canonical body order (cfg.names), matching each
-/// body's own colour so the name and the marker reinforce each other.
+/// Per-body tint — canonical body order (cfg.names), matching each body's own
+/// colour so the name and its markers reinforce each other. Used by the edge
+/// arrows and, faded right down, by the orbit paths.
 const edge_colors = [_]rl.Color{
     .{ .r = 255, .g = 210, .b = 110, .a = 220 }, // sun
     .{ .r = 180, .g = 175, .b = 170, .a = 220 }, // mercury
