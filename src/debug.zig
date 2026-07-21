@@ -15,7 +15,9 @@
 //! input takes. `pause` + `step` advance exactly one fixed physics step per
 //! rendered frame, so input timing that real devices only produce
 //! occasionally (a press and release inside one frame, say) can be
-//! constructed deliberately.
+//! constructed deliberately. For covering sim-time ground instead, `run <n>`
+//! executes a whole batch of steps inside a single frame and `warp <x>`
+//! scales how fast real time feeds the accumulator.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -45,6 +47,11 @@ var hooks: ?Hooks = null;
 
 pub var paused = false;
 pub var steps_pending: u32 = 0;
+/// Steps to execute synchronously inside the next frame (`run <n>`), on top
+/// of whatever that frame would run anyway. Works paused or running.
+pub var run_pending: u32 = 0;
+/// Multiplier on real elapsed time while unpaused (`warp <x>`).
+pub var warp: f32 = 1.0;
 /// Fixed physics steps since launch — the clock deterministic runs count in.
 pub var step_count: u64 = 0;
 
@@ -168,7 +175,7 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
     if (eq(u8, cmd, "help")) {
         try w.writeAll("commands: state | screenshot <path> | click <x> <y> [hold] | " ++
             "clickw <wx> <wy> [hold] | key <name> [frames] | wheel <dx> <dy> | " ++
-            "zoom <dy> | pause | resume | step [n] | help");
+            "zoom <dy> | pause | resume | step [n] | run <n> | warp <x> | help");
     } else if (eq(u8, cmd, "state")) {
         try writeState(w);
     } else if (eq(u8, cmd, "pause")) {
@@ -186,6 +193,31 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
         paused = true;
         steps_pending += n;
         try w.print("ok stepping {d}", .{n});
+    } else if (eq(u8, cmd, "run")) {
+        const n = parseInt(it.next() orelse "") orelse {
+            try w.writeAll("err run wants a step count");
+            return .done;
+        };
+        // A step is cheap but not free; keep one command from freezing the
+        // frame (and the bridge with it) for minutes. 1M steps is ~2.3 sim
+        // hours at 120 Hz.
+        if (n > 1_000_000) {
+            try w.writeAll("err run cap is 1000000 steps per command");
+            return .done;
+        }
+        run_pending +|= n;
+        try w.print("ok running {d} steps next frame", .{n});
+    } else if (eq(u8, cmd, "warp")) {
+        const x = parseFloat(it.next()) orelse {
+            try w.writeAll("err warp wants a multiplier (1 = real time)");
+            return .done;
+        };
+        if (!(x >= 0.01 and x <= 100)) {
+            try w.writeAll("err warp range is 0.01..100");
+            return .done;
+        }
+        warp = x;
+        try w.print("ok warp {d:.2}x", .{x});
     } else if (eq(u8, cmd, "click") or eq(u8, cmd, "clickw")) {
         const x = parseFloat(it.next()) orelse {
             try w.writeAll("err click wants: x y [hold_frames]");
@@ -289,7 +321,7 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
         return;
     };
     const ship = h.world.ship;
-    try w.print("{{\"step\":{d},\"paused\":{},\"steps_pending\":{d}", .{ step_count, paused, steps_pending });
+    try w.print("{{\"step\":{d},\"paused\":{},\"steps_pending\":{d},\"warp\":{d:.2}", .{ step_count, paused, steps_pending, warp });
 
     try w.writeAll(",\"ship\":{\"pos\":");
     try writeVec(w, ship.pos);

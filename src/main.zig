@@ -224,10 +224,11 @@ fn run(init: std.process.Init.Minimal) !void {
     while (!rl.windowShouldClose()) {
         dbg.pump();
 
-        // How many fixed steps to run this frame: real elapsed time normally;
-        // while the debug bridge holds the sim paused, exactly one step per
-        // rendered frame from the `step` budget, so injected per-frame input
-        // lands deterministically.
+        // How many fixed steps to run this frame: real elapsed time (scaled
+        // by the debug `warp` factor) normally; while the debug bridge holds
+        // the sim paused, exactly one step per rendered frame from the `step`
+        // budget, so injected per-frame input lands deterministically. A
+        // debug `run` batch executes in full this frame on top of either.
         var steps: u32 = 0;
         if (dbg.paused) {
             accumulator = 0; // don't bank real time while frozen
@@ -236,10 +237,15 @@ fn run(init: std.process.Init.Minimal) !void {
                 steps = 1;
             }
         } else {
-            accumulator += rl.getFrameTime();
-            if (accumulator > 0.25) accumulator = 0.25; // avoid spiral of death
+            accumulator += rl.getFrameTime() * dbg.warp;
+            // Avoid the spiral of death, but scale the cap with warp — a
+            // fixed 0.25 s would silently limit warp to ~30x of real time.
+            const max_acc = 0.25 * @max(1.0, dbg.warp);
+            if (accumulator > max_acc) accumulator = max_acc;
             while (accumulator >= fixed_dt) : (accumulator -= fixed_dt) steps += 1;
         }
+        steps += dbg.run_pending;
+        dbg.run_pending = 0;
 
         // Input -> simulation intent
         const in = input.sample(steps > 0);
