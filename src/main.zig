@@ -24,6 +24,13 @@ const is_web = builtin.target.os.tag == .emscripten;
 const screen_w = 1000;
 const screen_h = 700;
 
+// Do not rely on the platform's vsync implementation to pace the loop: on
+// some native backends the flag is only a hint and the game otherwise renders
+// hundreds of identical frames per second. Keep background debug instances
+// responsive without spending a full foreground frame budget on them.
+const foreground_fps: i32 = 60;
+const unfocused_fps: i32 = 15;
+
 // Belt rock arrays — file scope, not run()'s stack: ~240 KB of colliders
 // plus ~850 KB of outlines would be a big bite out of the wasm stack.
 var belt_rocks: [sim.Belt.Band.asteroid.count]sim.Belt.Rock = undefined;
@@ -185,6 +192,11 @@ fn run(init: std.process.Init.Minimal) !void {
     });
     rl.initWindow(screen_w, screen_h, "space-slop");
     defer rl.closeWindow();
+    // Browser builds are already paced by requestAnimationFrame, which also
+    // throttles background tabs. Native needs an explicit cap because its
+    // vsync hint is not guaranteed to be honoured.
+    var target_fps: i32 = foreground_fps;
+    if (!is_web) rl.setTargetFPS(target_fps);
     // Catch clicks shorter than a frame (trackpad taps) that raylib's own
     // per-frame polling loses; see input.zig.
     input.init();
@@ -302,6 +314,14 @@ fn run(init: std.process.Init.Minimal) !void {
     var accumulator: f32 = 0;
 
     while (!rl.windowShouldClose()) {
+        if (!is_web) {
+            const wanted_fps: i32 = if (rl.isWindowFocused()) foreground_fps else unfocused_fps;
+            if (wanted_fps != target_fps) {
+                target_fps = wanted_fps;
+                rl.setTargetFPS(target_fps);
+            }
+        }
+
         dbg.pump();
 
         // How many fixed steps to run this frame: real elapsed time (scaled
