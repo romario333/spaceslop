@@ -653,19 +653,43 @@ pub const Trail = struct {
         return outer.add(inner.sub(outer).scale(pt.blend));
     }
 
-    pub fn draw(self: *const Trail, planets: []const sim.Planet) void {
+    pub fn draw(self: *const Trail, planets: []const sim.Planet, cam: rl.Camera2D) void {
         if (self.len < 2) return;
-        var i: usize = 1;
-        var a = self.worldPos((self.head + cap - self.len) % cap, planets);
-        while (i < self.len) : (i += 1) {
-            // Walk from oldest to newest so alpha ramps up along the tail.
-            const b_idx = (self.head + cap - self.len + i) % cap;
-            const b = self.worldPos(b_idx, planets);
-            const t: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(self.len));
-            const alpha: u8 = @intFromFloat(t * 160.0);
-            rl.drawLineV(v(a), v(b), .{ .r = 120, .g = 200, .b = 255, .a = alpha });
+        const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+        const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+        const left = cam.target.x - view_w / 2.0;
+        const right = cam.target.x + view_w / 2.0;
+        const top = cam.target.y - view_h / 2.0;
+        const bottom = cam.target.y + view_h / 2.0;
+
+        // One raw RL_LINES batch instead of a drawLineV (own begin/end) per
+        // segment. Walk from oldest to newest so alpha ramps up along the
+        // tail; the oldest three quarters sit below alpha 120 and read as a
+        // faint wash, so striding over them loses nothing — the newest
+        // quarter, the part the eye follows, stays point-exact.
+        const base = self.head + cap - self.len;
+        var a = self.worldPos(base % cap, planets);
+        rl.gl.rlBegin(rl.gl.rl_lines);
+        var i: usize = 0;
+        while (i + 1 < self.len) {
+            const stride: usize = if (i < self.len / 4 * 3) 4 else 1;
+            const next = @min(i + stride, self.len - 1);
+            const b = self.worldPos((base + next) % cap, planets);
+            // Both endpoints strictly beyond the same view edge means the
+            // segment can't cross the screen; anything else draws. Never
+            // wrongly culls, whatever the segment length.
+            const out = (a.x < left and b.x < left) or (a.x > right and b.x > right) or
+                (a.y < top and b.y < top) or (a.y > bottom and b.y > bottom);
+            if (!out) {
+                const t = @as(f32, @floatFromInt(next)) / @as(f32, @floatFromInt(self.len));
+                rl.gl.rlColor4ub(120, 200, 255, @intFromFloat(t * 160.0));
+                rl.gl.rlVertex2f(a.x, a.y);
+                rl.gl.rlVertex2f(b.x, b.y);
+            }
             a = b;
+            i = next;
         }
+        rl.gl.rlEnd();
     }
 };
 
