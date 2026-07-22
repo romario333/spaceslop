@@ -13,24 +13,35 @@ native desktop and the browser via WebAssembly.
 ## Build & run
 
 Run all commands from the **project root** (the web build embeds `resources/`
-using a path relative to the current directory).
+using a path relative to the current directory). A `Makefile` wraps the common
+`zig build` invocations:
 
 ```sh
-zig build run                      # native desktop build + run
-zig build                          # native build only -> zig-out/bin/space-slop
-zig build test                     # run the dependency-free simulation tests
-zig build -Dtarget=wasm32-emscripten   # web build -> zig-out/web/
+make run     # native desktop build + run
+make build   # native build only -> zig-out/bin/space-slop
+make test    # run the dependency-free simulation tests
+make web     # web build -> zig-out/web/
+make serve   # web build + serve at http://localhost:8000/space_slop.html
+make clean   # remove zig-out/ and .zig-cache/
 ```
+
+Each target is a thin wrapper — e.g. `make web` is just
+`zig build -Dtarget=wasm32-emscripten` — so calling `zig build` directly works
+exactly the same. `PORT=9000 make serve` picks a different port.
 
 ### Playing the web build
 
 Emscripten output must be served over HTTP (opening the `.html` from disk won't
-work):
+work). `make serve` does this for you, or by hand:
 
 ```sh
 cd zig-out/web && python3 -m http.server 8000
 # then open http://localhost:8000/space_slop.html
 ```
+
+Every push to `main` also runs the tests, builds the web version and deploys it
+to **GitHub Pages** (`.github/workflows/pages.yml`). Enable it once in the repo
+settings under *Pages → Source → GitHub Actions*.
 
 ## Controls
 
@@ -107,6 +118,7 @@ art/           Art source/workspace and the specs the sprites were made to.
 tools/         art2resources.sh: convert an art theme's PNGs into resources/ WebP.
 vendor/        libwebp decoder subset, compiled into the game (raylib can't read WebP).
 build.zig      Native + web targets, plus the `test` step.
+Makefile       Convenience wrapper around the `zig build` commands above.
 ```
 
 The split is deliberate: **all game logic lives in `sim.zig` with zero raylib
