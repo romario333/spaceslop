@@ -445,7 +445,7 @@ fn run(init: std.process.Init.Minimal) !void {
                 render.drawOrbitPath(planets[o.parent].pos, o.semi_major, o.ecc, o.peri, i, cam);
             }
 
-            trail.draw(&planets);
+            trail.draw(&planets, cam);
 
             // Under the planets: a rock passing behind Jupiter should occlude
             // like the background object it is.
