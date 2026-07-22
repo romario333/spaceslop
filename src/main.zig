@@ -139,6 +139,15 @@ fn updateOrbits(planets: []sim.Planet, angles: []f32, dt: f32) void {
     }
 }
 
+/// Ratcheted pan clamp, shared by wheel and click-drag panning. Panning back
+/// toward the followed body is always allowed; panning further out stops at
+/// max_pan — or wherever the offset already sat (`before`), since selecting a
+/// body at the edge of a zoomed-out view can start beyond max_pan.
+fn ratchetPan(pan_offset: *Vec2, before: f32) void {
+    const limit = @max(DetailPanel.max_pan, before);
+    if (pan_offset.len() > limit) pan_offset.* = pan_offset.normalized().scale(limit);
+}
+
 /// The ship's spawn state: a counter-clockwise circular low orbit around
 /// Earth, wherever Earth currently is. Also used by the R-key reset, so
 /// resetting mid-flight puts you back home rather than where Earth used to be.
@@ -283,6 +292,13 @@ fn run(init: std.process.Init.Minimal) !void {
     // look around. Selecting a planet carries the offset over so the view
     // doesn't jump; deselecting or R zeroes it, snapping back to the ship.
     var pan_offset: Vec2 = .{};
+    // Click-drag panning. A press outside the detail panel is withheld from
+    // the click paths until it declares itself: travelling past the threshold
+    // makes it a pan and swallows the click; releasing before that replays it
+    // as a normal click. `drag_anchor` is where the withheld press landed.
+    var drag_anchor: ?rl.Vector2 = null;
+    var drag_last: rl.Vector2 = .{ .x = 0, .y = 0 };
+    var drag_panning = false;
     // Flare directions come from a fixed-seed stream: the sim stays RNG-free
     // (the rolled angle is passed into triggerFlare), the web build needs no
     // entropy source, and debug-bridge runs are reproducible — the first press
@@ -379,11 +395,53 @@ fn run(init: std.process.Init.Minimal) !void {
             const before = pan_offset.len();
             pan_offset.x -= wheel.x * scroll_speed / cam.zoom;
             pan_offset.y -= wheel.y * scroll_speed / cam.zoom;
-            // Selecting a body at the edge of a zoomed-out view can start
-            // beyond max_pan, so ratchet: scrolling back in is always
-            // allowed, scrolling further out is not.
-            const limit = @max(DetailPanel.max_pan, before);
-            if (pan_offset.len() > limit) pan_offset = pan_offset.normalized().scale(limit);
+            ratchetPan(&pan_offset, before);
+        }
+
+        // Click-drag pans the view too. Presses on the detail panel pass
+        // through untouched (sliders and buttons keep their immediate feel);
+        // any other press is withheld until it declares itself a click or a
+        // drag. handleMouse copes with press+release in one frame — the same
+        // shape as a trackpad tap — so the replayed click takes the exact
+        // paths a direct click would.
+        var mouse = in.mouse;
+        if (mouse.pressed) {
+            drag_anchor = null;
+            if (!detail.containsPoint(mouse.pos)) {
+                mouse.pressed = false;
+                if (mouse.released) {
+                    // Same-frame tap: plainly a click, nothing to withhold.
+                    mouse.pressed = true;
+                } else {
+                    drag_anchor = mouse.pos;
+                    drag_last = mouse.pos;
+                    drag_panning = false;
+                }
+            }
+        } else if (drag_anchor) |anchor| {
+            // Travel this far from the press (screen px) and it's a pan.
+            const drag_threshold: f32 = 4;
+            const dx = mouse.pos.x - anchor.x;
+            const dy = mouse.pos.y - anchor.y;
+            if (dx * dx + dy * dy > drag_threshold * drag_threshold) drag_panning = true;
+            if (drag_panning) {
+                // Content follows the cursor: world pinned under the finger.
+                const before = pan_offset.len();
+                pan_offset.x -= (mouse.pos.x - drag_last.x) / cam.zoom;
+                pan_offset.y -= (mouse.pos.y - drag_last.y) / cam.zoom;
+                ratchetPan(&pan_offset, before);
+            }
+            drag_last = mouse.pos;
+            if (mouse.released) {
+                if (!drag_panning) {
+                    // Never moved: replay the withheld press as a click at
+                    // the spot the player actually aimed at.
+                    mouse.pressed = true;
+                    mouse.pos = anchor;
+                }
+                drag_anchor = null;
+                drag_panning = false;
+            }
         }
         cam.offset = .{
             .x = @as(f32, @floatFromInt(rl.getScreenWidth())) / 2.0,
@@ -392,7 +450,7 @@ fn run(init: std.process.Init.Minimal) !void {
 
         // Planet picking + slider drags. Runs before the physics steps so an
         // edit shows up on this very frame.
-        detail.handleMouse(&planets, cam, &pan_offset, in.mouse);
+        detail.handleMouse(&planets, cam, &pan_offset, mouse);
         detail.save_flash = @max(0, detail.save_flash - rl.getFrameTime());
         if (detail.save_requested) {
             detail.save_requested = false;
@@ -508,9 +566,9 @@ fn run(init: std.process.Init.Minimal) !void {
         render.drawHud(world, theme, detail.selected);
         // Name tag for whatever body the cursor is over — same hit test that
         // clicking uses, and skipped over the panel, which owns its own area.
-        if (!detail.containsPoint(in.mouse.pos)) {
-            if (DetailPanel.pick(&planets, cam, in.mouse.pos)) |idx| {
-                render.drawHoverLabel(idx, in.mouse.pos);
+        if (!detail.containsPoint(mouse.pos)) {
+            if (DetailPanel.pick(&planets, cam, mouse.pos)) |idx| {
+                render.drawHoverLabel(idx, mouse.pos);
             }
         }
         detail.draw(&planets);

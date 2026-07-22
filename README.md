@@ -39,6 +39,7 @@ cd zig-out/web && python3 -m http.server 8000
 | `W` / `↑` | thrust along heading |
 | `A` `D` / `←` `→` | rotate |
 | scroll / two-finger swipe | pan the view |
+| click + drag | pan the view (a drag never selects; a still click still does) |
 | `⌘` + scroll | zoom |
 | `R` | reset ship |
 | `T` | cycle visual theme (scifi-60s → classic) |
@@ -77,6 +78,8 @@ console and call `spaceSlopDebug('state')`.
 | `screenshot <path>` | save a screenshot of the current frame (native only) |
 | `click <x> <y> [hold]` | synthetic left click at screen px, held `hold` frames; `hold 0` = press **and** release inside one frame (the flaky-trackpad-tap case) |
 | `clickw <wx> <wy> [hold]` | same, but world coordinates (e.g. `clickw 0 0` clicks Earth) |
+| `drag <x0> <y0> <x1> <y1> [frames]` | synthetic left-button drag: press, glide linearly over `frames` frames, release (pans the view) |
+| `dragw <wx0> <wy0> <wx1> <wy1> [frames]` | same, but world coordinates |
 | `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust`, one-shots `r/t/o/f` |
 | `wheel <dx> <dy>` | one frame of scroll (pans the view) |
 | `zoom <dy>` | one frame of cmd+scroll (zooms) |
