@@ -330,6 +330,30 @@ pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
         }
 
         pub fn draw(self: *const Self, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
+            const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+            const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+            const left = cam.target.x - view_w / 2.0 - margin;
+            const right = cam.target.x + view_w / 2.0 + margin;
+            const top = cam.target.y - view_h / 2.0 - margin;
+            const bottom = cam.target.y + view_h / 2.0 + margin;
+
+            // Everything the belt draws lives in an annulus around the sun:
+            // rock orbit radii stay within the band, stretched outward by the
+            // radial wobble (wob_amp caps at 75, see sim.Belt.fillRocks) and
+            // the outline margin; the dust rings sit inside the band proper.
+            // When the view rect misses that annulus entirely — e.g. parked
+            // at Earth at normal zoom — skip the whole pass: the per-rock
+            // cull alone costs a sin/cos for every rock in the band.
+            const reach: f32 = 75.0 + margin;
+            const near_x = @max(@max(left - center.x, center.x - right), 0);
+            const near_y = @max(@max(top - center.y, center.y - bottom), 0);
+            const far_x = @max(@abs(center.x - left), @abs(center.x - right));
+            const far_y = @max(@abs(center.y - top), @abs(center.y - bottom));
+            const r_min = belt.band.inner - reach;
+            const r_max = belt.band.outer + reach;
+            if (near_x * near_x + near_y * near_y > r_max * r_max) return; // view fully outside
+            if (far_x * far_x + far_y * far_y < r_min * r_min) return; // view fully inside the hole
+
             // Dusty annulus underlay: marks the hazard band at every zoom and
             // gives the speckle something to sit on. Stacked concentric rings,
             // each pulled in from both edges, so the accumulated alpha steps up
@@ -341,13 +365,6 @@ pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
                 const inset = width * layer / 9.0;
                 rl.drawRing(v(center), belt.band.inner + inset, belt.band.outer - inset, 0, 360, 360, palette.dust);
             }
-
-            const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
-            const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
-            const left = cam.target.x - view_w / 2.0 - margin;
-            const right = cam.target.x + view_w / 2.0 + margin;
-            const top = cam.target.y - view_h / 2.0 - margin;
-            const bottom = cam.target.y + view_h / 2.0 + margin;
 
             std.debug.assert(belt.rocks.len <= self.visuals.len);
             const px = min_px / cam.zoom;
@@ -428,29 +445,72 @@ pub fn drawBeltImpacts(ship_pos: Vec2, time: f32) void {
 /// system, and any zoom level where it looked right made another look wrong.
 pub fn drawOrbitPath(focus: Vec2, a: f32, e: f32, peri: f32, body_idx: usize, cam: rl.Camera2D) void {
     const r_px = a * cam.zoom;
+    // Sub-pixel at this zoom (a moon's orbit seen from system scale): at the
+    // path's faint alpha nothing readable survives, skip the draw entirely.
+    if (r_px < 1) return;
 
-    // Hairline in screen space: a world-thickness line disappears zoomed out
-    // and swells into a fat band zoomed in.
-    const thickness = 1.5 / cam.zoom;
-    // Segments from the apparent size — a path that fills the window shouldn't
-    // read as a polygon, and a small one shouldn't cost hundreds of quads.
-    const segments: usize = @intFromFloat(std.math.clamp(r_px * 0.5, 48, 512));
+    // Whole-ellipse cull, the belts' rect-vs-annulus test: every point of
+    // the path lies between periapsis a(1-e) and apoapsis a(1+e) from the
+    // focus, so a view rect that misses that annulus sees none of it.
+    const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+    const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+    const left = cam.target.x - view_w / 2.0;
+    const right = cam.target.x + view_w / 2.0;
+    const top = cam.target.y - view_h / 2.0;
+    const bottom = cam.target.y + view_h / 2.0;
+    const pad = 2.0 / cam.zoom; // line thickness + segment-chord sag, world px
+    const near_x = @max(@max(left - focus.x, focus.x - right), 0);
+    const near_y = @max(@max(top - focus.y, focus.y - bottom), 0);
+    const far_x = @max(@abs(focus.x - left), @abs(focus.x - right));
+    const far_y = @max(@abs(focus.y - top), @abs(focus.y - bottom));
+    const r_min = a * (1 - e) - pad;
+    const r_max = a * (1 + e) + pad;
+    if (near_x * near_x + near_y * near_y > r_max * r_max) return;
+    if (far_x * far_x + far_y * far_y < r_min * r_min) return;
+
     var color = edge_colors[body_idx];
     color.a = orbit_alpha;
 
-    // The parent sits at a focus, so the ellipse's geometric centre is offset
-    // a·e toward apoapsis; sweep the ellipse in its own frame and rotate out.
-    const minor = a * @sqrt(1 - e * e);
-    const center = focus.add(Vec2.fromAngle(peri).scale(-a * e));
-    var prev: Vec2 = undefined;
-    var s: usize = 0;
-    while (s <= segments) : (s += 1) {
-        const t = std.math.tau * @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(segments));
-        const pt = center.add((Vec2{ .x = a * @cos(t), .y = minor * @sin(t) }).rotated(peri));
-        if (s > 0) rl.drawLineEx(v(prev), v(pt), thickness, color);
-        prev = pt;
+    // The ellipse never changes shape — only the focus moves — so its ring
+    // of focus-relative points (periapsis rotation and the a·e centre offset
+    // baked in) is computed once per body and translated per frame. The
+    // parent sits at a focus, so the geometric centre is offset a·e toward
+    // apoapsis; sweep the ellipse in its own frame and rotate out.
+    if (!orbit_cache_ready[body_idx]) {
+        orbit_cache_ready[body_idx] = true;
+        const minor = a * @sqrt(1 - e * e);
+        const center = Vec2.fromAngle(peri).scale(-a * e);
+        for (&orbit_cache[body_idx], 0..) |*pt, s| {
+            const t = std.math.tau * @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(orbit_cache_segments));
+            pt.* = v(center.add((Vec2{ .x = a * @cos(t), .y = minor * @sin(t) }).rotated(peri)));
+        }
     }
+
+    // Segments from the apparent size — a path that fills the window
+    // shouldn't read as a polygon, and a small one shouldn't cost hundreds
+    // of vertices. Powers of two, so the ring can be stride-sampled from the
+    // one full-resolution cache.
+    var segments: usize = 64;
+    while (segments < orbit_cache_segments and @as(f32, @floatFromInt(segments)) < r_px * 0.5) segments *= 2;
+    const stride = orbit_cache_segments / segments;
+
+    // One batched strip per orbit, not a quad per segment.
+    var pts: [orbit_cache_segments + 1]rl.Vector2 = undefined;
+    for (pts[0 .. segments + 1], 0..) |*pt, s| {
+        const c = orbit_cache[body_idx][s * stride];
+        pt.* = .{ .x = focus.x + c.x, .y = focus.y + c.y };
+    }
+    rl.drawLineStrip(pts[0 .. segments + 1], color);
 }
+
+/// Focus-relative point ring of each body's orbit ellipse (see
+/// drawOrbitPath). Filled lazily; never invalidated, because orbit shapes
+/// are comptime constants (`orbits` in main.zig — the detail panel edits
+/// masses and radii, never ellipses). File scope, not the draw's stack:
+/// ~86 KB would crowd the wasm stack the same way the belt arrays did.
+const orbit_cache_segments = 512;
+var orbit_cache: [edge_colors.len][orbit_cache_segments + 1]rl.Vector2 = undefined;
+var orbit_cache_ready = [_]bool{false} ** edge_colors.len;
 
 /// The one alpha every orbit path is drawn at. Faint on purpose — the paths
 /// are there to be noticed when you look for them, not to compete with the

@@ -16,9 +16,15 @@ pub fn build(b: *std.Build) !void {
         std.log.info("web build: forcing ReleaseSmall (Debug is broken for emscripten on Zig 0.16)", .{});
     }
 
+    // raylib at -O0 dominates Debug frame time (immediate-mode vertex
+    // emission is ~10x slower), so bump it to ReleaseSafe there — optimized,
+    // but C code keeps its UBSan traps. Release builds pass through unchanged.
+    const raylib_optimize: std.builtin.OptimizeMode =
+        if (optimize == .Debug) .ReleaseSafe else optimize;
+
     const raylib_dep = b.dependency("raylib_zig", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = raylib_optimize,
     });
     const raylib = raylib_dep.module("raylib");
     const raylib_artifact = raylib_dep.artifact("raylib");
