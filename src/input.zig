@@ -195,6 +195,7 @@ fn onWheel(event_type: c_int, e: *const EmWheelEvent, user_data: ?*anyopaque) ca
 // synchronisation is needed.
 
 const Click = struct { pos: rl.Vector2, hold: u32 };
+const Drag = struct { from: rl.Vector2, to: rl.Vector2, frames: u32, elapsed: u32 };
 
 /// Remaining frames each held key stays down. Ship keys only tick while the
 /// simulation actually steps (see `sample`), so "thrust for 3 frames" means
@@ -214,6 +215,7 @@ var syn_zoom: f32 = 0;
 var clicks: [8]Click = undefined;
 var clicks_len: usize = 0;
 var active_click: ?Click = null;
+var active_drag: ?Drag = null;
 
 /// Sample this frame's input: real raylib state (with latched click edges
 /// folded in) and synthetic events merged on top. `advancing` is whether a
@@ -309,6 +311,25 @@ pub fn sample(advancing: bool) Frame {
         syn_zoom = 0;
     }
 
+    // A synthetic drag owns the cursor for its whole span: press at `from`,
+    // glide linearly to `to`, release there. Exercises the click-vs-drag
+    // arbitration in main.zig the way a real mouse drag does.
+    if (active_drag) |*d| {
+        if (d.elapsed == 0) f.mouse.pressed = true;
+        const t = @as(f32, @floatFromInt(d.elapsed)) / @as(f32, @floatFromInt(d.frames));
+        f.mouse.pos = .{
+            .x = d.from.x + (d.to.x - d.from.x) * t,
+            .y = d.from.y + (d.to.y - d.from.y) * t,
+        };
+        if (d.elapsed == d.frames) {
+            f.mouse.released = true;
+            active_drag = null;
+        } else {
+            d.elapsed += 1;
+        }
+        return f;
+    }
+
     // Synthetic clicks own the cursor while active. hold = 0 is the flaky
     // trackpad tap: press and release delivered in the same frame.
     if (active_click) |*c| {
@@ -371,6 +392,20 @@ pub fn injectKey(name: []const u8, frames: u32) bool {
     } else {
         return false;
     }
+    return true;
+}
+
+/// Queue a synthetic left-button drag: press at (x0, y0), move linearly to
+/// (x1, y1) over `frames` frames, release there. Returns false while another
+/// drag is still in flight.
+pub fn injectDrag(x0: f32, y0: f32, x1: f32, y1: f32, frames: u32) bool {
+    if (active_drag != null) return false;
+    active_drag = .{
+        .from = .{ .x = x0, .y = y0 },
+        .to = .{ .x = x1, .y = y1 },
+        .frames = @max(1, frames),
+        .elapsed = 0,
+    };
     return true;
 }
 

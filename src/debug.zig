@@ -174,8 +174,10 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
 
     if (eq(u8, cmd, "help")) {
         try w.writeAll("commands: state | screenshot <path> | click <x> <y> [hold] | " ++
-            "clickw <wx> <wy> [hold] | key <name> [frames] | wheel <dx> <dy> | " ++
-            "zoom <dy> | pause | resume | step [n] | run <n> | warp <x> | help");
+            "clickw <wx> <wy> [hold] | drag <x0> <y0> <x1> <y1> [frames] | " ++
+            "dragw <wx0> <wy0> <wx1> <wy1> [frames] | key <name> [frames] | " ++
+            "wheel <dx> <dy> | zoom <dy> | pause | resume | step [n] | run <n> | " ++
+            "warp <x> | help");
     } else if (eq(u8, cmd, "state")) {
         try writeState(w);
     } else if (eq(u8, cmd, "pause")) {
@@ -247,6 +249,33 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
             return .done;
         }
         try w.print("ok click {d:.0} {d:.0} hold {d}", .{ px, py, hold });
+    } else if (eq(u8, cmd, "drag") or eq(u8, cmd, "dragw")) {
+        var coords: [4]f32 = undefined;
+        for (&coords) |*c| {
+            c.* = parseFloat(it.next()) orelse {
+                try w.writeAll("err drag wants: x0 y0 x1 y1 [frames]");
+                return .done;
+            };
+        }
+        const frames = parseInt(it.next() orelse "10") orelse {
+            try w.writeAll("err bad frame count");
+            return .done;
+        };
+        var from: rl.Vector2 = .{ .x = coords[0], .y = coords[1] };
+        var to: rl.Vector2 = .{ .x = coords[2], .y = coords[3] };
+        if (eq(u8, cmd, "dragw")) {
+            const h = hooks orelse {
+                try w.writeAll("err not wired");
+                return .done;
+            };
+            from = rl.getWorldToScreen2D(from, h.cam.*);
+            to = rl.getWorldToScreen2D(to, h.cam.*);
+        }
+        if (!input.injectDrag(from.x, from.y, to.x, to.y, frames)) {
+            try w.writeAll("err a drag is already in flight");
+            return .done;
+        }
+        try w.print("ok drag {d:.0} {d:.0} -> {d:.0} {d:.0} frames {d}", .{ from.x, from.y, to.x, to.y, frames });
     } else if (eq(u8, cmd, "key")) {
         const name = it.next() orelse {
             try w.writeAll("err key wants: name [frames]");
