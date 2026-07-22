@@ -4,6 +4,8 @@ A tiny 2D top-down space game written in **Zig** with **raylib**: a rocket flies
 between planets under Newtonian gravity. Built to learn Zig, and it targets both
 native desktop and the browser via WebAssembly.
 
+**▶ [Play it live in your browser](https://romario333.github.io/spaceslop/)**
+
 ## Requirements
 
 - **Zig 0.16.0** (pinned in `build.zig.zon` via `minimum_zig_version`)
