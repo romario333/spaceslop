@@ -17,7 +17,7 @@ jobs:
     name: format, test & native build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -47,7 +47,7 @@ jobs:
     name: web build (wasm32-emscripten)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
