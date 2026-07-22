@@ -1,0 +1,51 @@
+name: CI
+
+# Verify every pull request (and the main branch after merge).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref so a fresh push doesn't queue behind
+# an outdated one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: format, test & native build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          # Keep in lockstep with minimum_zig_version in build.zig.zon.
+          version: 0.16.0
+
+      - name: Check formatting
+        run: zig fmt --check build.zig build.zig.zon src
+
+      - name: Run simulation unit tests
+        run: zig build test
+
+      - name: Native build
+        run: zig build
+
+  web-build:
+    name: web build (wasm32-emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # First run downloads the Emscripten SDK (pinned in build.zig.zon) into
+      # the Zig global cache, which setup-zig persists across runs.
+      - name: Web build
+        run: zig build -Dtarget=wasm32-emscripten
