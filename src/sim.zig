@@ -260,6 +260,15 @@ pub const Belt = struct {
         };
     }
 
+    /// Position-only rockState, for the render layer's zoomed-out speckle
+    /// path where velocity is never used: skips the extra cos and the
+    /// tangent/radial blend. Must stay in lockstep with rockState — the
+    /// "rockPos matches rockState" test pins them together.
+    pub fn rockPos(rock: Rock, center: Vec2, t: f32) Vec2 {
+        const r = rock.orbit_r + rock.wob_amp * @sin(rock.wob_phase + rock.wob_freq * t);
+        return center.add(Vec2.fromAngle(rock.phase + rock.omega * t).scale(r));
+    }
+
     /// Hull cost of an impact: a speed term (hit hard, hurt more) plus a
     /// size term (boulders always cost something), clamped so a feather
     /// graze still stings and no single rock one-shots a full hull.
@@ -874,4 +883,18 @@ test "empty tank kills thrust and never goes negative" {
     try testing.expect(!world.ship.braking);
     try testing.expectEqual(vel_before.x, world.ship.vel.x);
     try testing.expectEqual(vel_before.y, world.ship.vel.y);
+}
+
+test "rockPos matches rockState position" {
+    var rocks: [64]Belt.Rock = undefined;
+    Belt.fillRocks(&rocks, 0xDEAD_BEEF, .asteroid);
+    const center: Vec2 = .{ .x = 12.5, .y = -3.75 };
+    for (rocks) |rock| {
+        for ([_]f32{ 0, 1.7, 300.0, 12345.6 }) |t| {
+            const full = Belt.rockState(rock, center, t).pos;
+            const fast = Belt.rockPos(rock, center, t);
+            try testing.expectEqual(full.x, fast.x);
+            try testing.expectEqual(full.y, fast.y);
+        }
+    }
 }

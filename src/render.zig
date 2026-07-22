@@ -223,17 +223,30 @@ pub const Starfield = struct {
         const tx1: i32 = @intFromFloat(@floor((cam.target.x + view_w / 2.0 + half) / tile));
         const ty0: i32 = @intFromFloat(@ceil((cam.target.y - view_h / 2.0 - half) / tile));
         const ty1: i32 = @intFromFloat(@floor((cam.target.y + view_h / 2.0 + half) / tile));
+        // Every stamped tile overlaps the view, but each tile spans at least
+        // the whole view — most of a stamp's stars land outside it. Cull per
+        // star: a compare is far cheaper than the four vertices an offscreen
+        // rect would still cost the CPU.
+        const left = cam.target.x - view_w / 2.0 - px;
+        const right = cam.target.x + view_w / 2.0 + px;
+        const top = cam.target.y - view_h / 2.0 - px;
+        const bottom = cam.target.y + view_h / 2.0 + px;
         var ty = ty0;
         while (ty <= ty1) : (ty += 1) {
             var tx = tx0;
             while (tx <= tx1) : (tx += 1) {
                 const ox = @as(f32, @floatFromInt(tx)) * tile;
                 const oy = @as(f32, @floatFromInt(ty)) * tile;
-                for (self.points) |s| rl.drawRectangleV(
-                    .{ .x = s.x * spread + ox - px / 2.0, .y = s.y * spread + oy - px / 2.0 },
-                    .{ .x = px, .y = px },
-                    color,
-                );
+                for (self.points) |s| {
+                    const x = s.x * spread + ox;
+                    const y = s.y * spread + oy;
+                    if (x < left or x > right or y < top or y > bottom) continue;
+                    rl.drawRectangleV(
+                        .{ .x = x - px / 2.0, .y = y - px / 2.0 },
+                        .{ .x = px, .y = px },
+                        color,
+                    );
+                }
             }
         }
     }
@@ -290,10 +303,17 @@ pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
         };
 
         visuals: [count]Visual = undefined,
+        /// Cached world positions for the zoomed-out speckle path (see
+        /// draw): refreshed a stripe per frame instead of recomputed whole.
+        pos_cache: [count]Vec2 = undefined,
+        cache_cursor: usize = 0,
+        cache_primed: bool = false,
 
         const Self = @This();
 
         pub fn init(self: *Self, seed: u64) void {
+            self.cache_cursor = 0;
+            self.cache_primed = false;
             var prng = std.Random.DefaultPrng.init(seed);
             const rng = prng.random();
             for (&self.visuals) |*vis| {
@@ -329,7 +349,7 @@ pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
             }
         }
 
-        pub fn draw(self: *const Self, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
+        pub fn draw(self: *Self, belt: *const sim.Belt, center: Vec2, cam: rl.Camera2D) void {
             const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
             const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
             const left = cam.target.x - view_w / 2.0 - margin;
@@ -358,18 +378,72 @@ pub fn BeltVisuals(comptime count: usize, comptime palette: BeltPalette) type {
             // gives the speckle something to sit on. Stacked concentric rings,
             // each pulled in from both edges, so the accumulated alpha steps up
             // toward mid-belt roughly like the sim's density bump — no hard rim
-            // where dust meets space.
+            // where dust meets space. Segment count follows apparent size,
+            // like the orbit paths: 360 chords on a 90-px ring is overkill.
             const width = belt.band.outer - belt.band.inner;
+            // A quarter of the apparent radius keeps chord sag under ~0.3 px
+            // at any size the clamp allows.
+            const ring_segs: i32 = @intFromFloat(std.math.clamp(belt.band.outer * cam.zoom / 4.0, 48, 360));
             var layer: f32 = 0;
             while (layer < 4) : (layer += 1) {
                 const inset = width * layer / 9.0;
-                rl.drawRing(v(center), belt.band.inner + inset, belt.band.outer - inset, 0, 360, 360, palette.dust);
+                rl.drawRing(v(center), belt.band.inner + inset, belt.band.outer - inset, 0, 360, ring_segs, palette.dust);
             }
 
             std.debug.assert(belt.rocks.len <= self.visuals.len);
             const px = min_px / cam.zoom;
+
+            // Zoomed far enough out that every rock is sub-pixel (the largest
+            // rolls 18.5, see sim.Belt.fillRocks), the swarm is pure speckle
+            // and two exactnesses stop mattering: positions may lag a few
+            // frames (a rock drifts well under a screen pixel between stripe
+            // refreshes at this zoom — collisions always use the sim's own
+            // fresh rockState), and the rects can skip drawRectangleV's
+            // per-call rotation scaffolding for raw batch vertices.
+            if (px >= 20.0) {
+                if (!self.cache_primed) {
+                    self.cache_primed = true;
+                    for (belt.rocks, self.pos_cache[0..belt.rocks.len]) |rock, *p|
+                        p.* = sim.Belt.rockPos(rock, center, belt.time);
+                } else {
+                    var n: usize = 0;
+                    while (n < count / 4) : (n += 1) {
+                        const i = self.cache_cursor;
+                        self.pos_cache[i] = sim.Belt.rockPos(belt.rocks[i], center, belt.time);
+                        self.cache_cursor = (i + 1) % belt.rocks.len;
+                    }
+                }
+                // The same white shapes-texture texel every raylib shape
+                // draw samples; one texcoord serves all four quad corners.
+                const shapes = rl.getShapesTexture();
+                const src = rl.getShapesTextureRectangle();
+                rl.gl.rlSetTexture(shapes.id);
+                rl.gl.rlBegin(rl.gl.rl_quads);
+                rl.gl.rlNormal3f(0, 0, 1);
+                rl.gl.rlTexCoord2f(
+                    (src.x + src.width / 2.0) / @as(f32, @floatFromInt(shapes.width)),
+                    (src.y + src.height / 2.0) / @as(f32, @floatFromInt(shapes.height)),
+                );
+                const h = px / 2.0;
+                for (self.pos_cache[0..belt.rocks.len], 0..) |pos, i| {
+                    if (pos.x < left or pos.x > right or pos.y < top or pos.y > bottom) continue;
+                    const col = self.visuals[i].color;
+                    rl.gl.rlColor4ub(col.r, col.g, col.b, col.a);
+                    rl.gl.rlVertex2f(pos.x - h, pos.y - h);
+                    rl.gl.rlVertex2f(pos.x - h, pos.y + h);
+                    rl.gl.rlVertex2f(pos.x + h, pos.y + h);
+                    rl.gl.rlVertex2f(pos.x + h, pos.y - h);
+                }
+                rl.gl.rlEnd();
+                rl.gl.rlSetTexture(0);
+                return;
+            }
+            // Zoomed in, positions must be exact; a stale cache must not
+            // survive into the next zoom-out.
+            self.cache_primed = false;
+
             for (belt.rocks, 0..) |rock, i| {
-                const pos = sim.Belt.rockState(rock, center, belt.time).pos;
+                const pos = sim.Belt.rockPos(rock, center, belt.time);
                 if (pos.x < left or pos.x > right or pos.y < top or pos.y > bottom) continue;
                 const vis = &self.visuals[i];
                 if (rock.size <= px) {
