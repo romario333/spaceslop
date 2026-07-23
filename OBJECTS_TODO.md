@@ -71,21 +71,13 @@ The four Galilean moons, the four inner moons, and the largest irregular.
 
 ## Dwarf planets
 
-The five IAU-recognized dwarf planets, plus the four best-known candidates as
-optional stretch goals.
+The five IAU-recognized dwarf planets.
 
 - [ ] **Ceres** — Art: no; Sim: no
 - [x] **Pluto** — Art: yes (`art/scifi-60s/pluto.png`); Sim: yes (`pluto`)
 - [x] **Eris** — Art: yes; Sim: yes (`eris`)
 - [x] **Haumea** — Art: yes; Sim: yes (`haumea`)
 - [x] **Makemake** — Art: yes; Sim: yes (`makemake`)
-
-Optional candidates (do after everything above):
-
-- [ ] **Sedna** — Art: no; Sim: no
-- [ ] **Quaoar** — Art: no; Sim: no
-- [ ] **Gonggong** — Art: no; Sim: no
-- [ ] **Orcus** — Art: no; Sim: no
 
 ## Comets
 
