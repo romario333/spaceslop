@@ -52,7 +52,7 @@ settings under *Pages → Source → GitHub Actions*.
 | `W` / `↑` | thrust along heading |
 | `S` / `↓` | retro burn |
 | `A` `D` / `←` `→` | rotate |
-| `E` / `H` | refuel / repair the hull — only while parked in a stable *low* orbit around a planet or moon (a prompt appears over that body) |
+| `E` / `H` | refuel / repair the hull — only while close to a planet or moon (within one diameter) at near-orbital speed (a prompt appears over that body); gas giants offer neither, park at their moons instead |
 | scroll / two-finger swipe | pan the view |
 | click + drag | pan the view (a drag never selects; a still click still does) |
 | `⌘` + scroll | zoom |

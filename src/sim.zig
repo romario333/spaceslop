@@ -92,6 +92,10 @@ pub const Planet = struct {
     /// ship inside the SOI is bound to the body or on a fast flyby (capture
     /// assist applies only to the former, so slingshots stay untouched).
     vel: Vec2 = .{},
+    /// Whether the body offers orbital services (refuel, hull repair — see
+    /// World.serviceTarget). False for the gas giants: nothing to land on,
+    /// nothing in orbit to dock with.
+    services: bool = true,
 };
 
 pub const Ship = struct {
@@ -125,8 +129,8 @@ pub const Ship = struct {
     /// collisions); clamped at zero. Flying into a planet's surface skips
     /// the hull entirely and destroys the ship outright (see `crash`).
     health: f32 = max_health,
-    /// Taking on propellant / patching the hull this step, in a stable orbit
-    /// around a body (see World.serviceTarget). Same role as `thrusting`:
+    /// Taking on propellant / patching the hull this step, while parked near
+    /// a body (see World.serviceTarget). Same role as `thrusting`:
     /// they say what actually happened, not what was asked for, so the
     /// renderer can light up only the service that is really running.
     refuelling: bool = false,
@@ -344,8 +348,8 @@ pub const Input = struct {
     /// both at once simply cancels out.
     brake: bool = false,
     /// Hold to take on propellant, and to patch the hull, from the body the
-    /// ship is parked in a stable orbit around. Ignored anywhere else (see
-    /// World.serviceTarget); the two are independent, so both can run at once.
+    /// ship is parked near. Ignored anywhere else (see World.serviceTarget);
+    /// the two are independent, so both can run at once.
     refuel: bool = false,
     repair: bool = false,
 };
@@ -389,19 +393,22 @@ pub const World = struct {
     /// Hull points repaired per second in the same situation: a wreck-adjacent
     /// hull takes about as long to patch as an empty tank takes to fill.
     pub const repair_rate: f32 = 4.0;
-    /// How far the orbit's periapsis must clear the body's surface (and its
-    /// gravity-softening core) for the orbit to count as parked. Anything
-    /// grazing that close is a landing attempt, not a stable orbit.
-    pub const service_clearance: f32 = 20.0;
-    /// Services are only offered in a *low* orbit: the whole orbit, apoapsis
-    /// included, must stay within this multiple of the body's own scale (its
-    /// radius, or its softened core where that is bigger). An SOI is far too
-    /// generous a range on its own — a stable orbit around Earth reaches out
+    /// Services are only offered close in: within one of the body's own
+    /// diameters (2× its radius, or its softened core where that is bigger).
+    /// An SOI is far too generous a range on its own — Earth's reaches out
     /// past the moon, so parking near the moon would offer a top-up from an
     /// Earth 1500 px away.
-    pub const service_range_factor: f32 = 4.0;
+    pub const service_range_factor: f32 = 2.5;
+    /// The relative-speed window for services, as multiples of the circular
+    /// orbit speed at the ship's current distance. Inside this band a stable
+    /// orbit is likely: the ceiling stays below escape speed (√2 ≈ 1.414 of
+    /// circular, so anything in-band is on a bound orbit that won't leave the
+    /// body), and the floor rules out speeds so far under circular that the
+    /// trajectory is a fall toward the surface rather than an orbit.
+    pub const service_speed_min_factor: f32 = 0.75;
+    pub const service_speed_max_factor: f32 = 1.3;
 
-    /// How far out a body still services a ship: its low-orbit band, never
+    /// How far out a body still services a ship: one of its diameters, never
     /// more than its own SOI (which is the smaller of the two for the tiny
     /// moons, whose bubbles barely clear their cores).
     pub fn serviceRange(p: Planet) f32 {
@@ -497,22 +504,29 @@ pub const World = struct {
     }
 
     /// The body whose orbital services (refuel, hull repair) the ship can use
-    /// right now, or null if it isn't parked anywhere. "Parked" means a closed
-    /// low orbit that stays put on its own: bound to a body other than the
-    /// root one — you don't dock with the sun — with the periapsis clear of
-    /// the surface (it won't come down) and the apoapsis inside the body's
-    /// service range (it stays near the body, and inside its SOI). Both bounds
-    /// are checked against the same elements the pilot sees the ship fly, so
-    /// anything that looks like a low stable orbit is one.
+    /// right now, or null if it isn't parked anywhere. "Parked" means two
+    /// things, both judged from the ship's state right now rather than from
+    /// full Kepler elements (which rejected slightly eccentric orbits and made
+    /// the prompt feel flaky): the ship is close — within one of the body's
+    /// diameters (see serviceRange) — and its relative speed sits in a band
+    /// around the local circular-orbit speed where a stable orbit is likely
+    /// (see service_speed_min_factor / service_speed_max_factor). The body
+    /// must offer services at all (see Planet.services — gas giants don't),
+    /// and the root body never serves — you don't dock with the sun.
     pub fn serviceTarget(self: World) ?usize {
         if (!self.ship.alive()) return null;
         const idx = self.dominantIndex(self.ship.pos) orelse return null;
         if (idx == 0) return null;
         const p = self.planets[idx];
-        const orbit = self.orbitAround(idx);
-        if (!orbit.bound) return null;
-        if (orbit.peri < @max(p.radius, p.core) + Ship.radius + service_clearance) return null;
-        if (orbit.apo > serviceRange(p)) return null;
+        if (!p.services) return null;
+        const dist = self.ship.pos.sub(p.pos).len();
+        if (dist > serviceRange(p)) return null;
+        // Clamped like gravityAt, so the reference speed stays finite even if
+        // the ship somehow samples inside the body's surface.
+        const v_circ = circularOrbitSpeed(p.mass, @max(dist, @max(p.radius, p.core)));
+        const v_rel = self.ship.vel.sub(p.vel).len();
+        if (v_rel < service_speed_min_factor * v_circ) return null;
+        if (v_rel > service_speed_max_factor * v_circ) return null;
         return idx;
     }
 
@@ -1087,8 +1101,9 @@ test "empty tank kills thrust and never goes negative" {
     try testing.expectEqual(vel_before.y, world.ship.vel.y);
 }
 
-// Sun plus one Earth-like body 1500 px out, with the ship on a circular
-// 340-px orbit around it — the same shape the game spawns you in.
+// Sun plus one Earth-like body 15000 px out, with the ship on a circular
+// 250-px orbit around it — comfortably inside the body's 280-px service
+// range (one diameter of its 140-px radius).
 fn parkedWorld() World {
     const planets = struct {
         const list = [_]Planet{
@@ -1096,7 +1111,7 @@ fn parkedWorld() World {
             .{ .pos = .{ .x = 15000, .y = 0 }, .mass = 8000, .radius = 140, .soi = 2500 },
         };
     }.list;
-    const r: f32 = 340;
+    const r: f32 = 250;
     return .{
         .planets = &planets,
         .ship = .{
@@ -1111,8 +1126,16 @@ test "a stable orbit around a body offers its services" {
     try testing.expectEqual(@as(?usize, 1), world.serviceTarget());
     const orbit = world.orbitAround(1);
     try testing.expect(orbit.bound);
-    try testing.expectApproxEqRel(@as(f32, 340), orbit.peri, 1e-3);
-    try testing.expectApproxEqRel(@as(f32, 340), orbit.apo, 1e-3);
+    try testing.expectApproxEqRel(@as(f32, 250), orbit.peri, 1e-3);
+    try testing.expectApproxEqRel(@as(f32, 250), orbit.apo, 1e-3);
+
+    // A moderately eccentric orbit close in qualifies too: the prompt keys
+    // off distance and relative speed, not a perfectly contained ellipse
+    // (the old apoapsis check rejected this one and made the prompt flaky).
+    var eccentric = parkedWorld();
+    eccentric.ship.vel = .{ .x = 0, .y = 1.2 * World.circularOrbitSpeed(eccentric.planets[1].mass, 250) };
+    try testing.expect(eccentric.orbitAround(1).apo > World.serviceRange(eccentric.planets[1]));
+    try testing.expectEqual(@as(?usize, 1), eccentric.serviceTarget());
 
     // The root body is never a service target, however tidy the orbit is.
     var solar = parkedWorld();
@@ -1129,47 +1152,63 @@ test "a stable orbit around a body offers its services" {
 }
 
 test "unstable trajectories offer nothing" {
-    // Hyperbolic flyby: bound is false, so no service.
+    // Hyperbolic flyby: relative speed far above the service band.
     var flyby = parkedWorld();
     flyby.ship.vel = .{ .x = 0, .y = 400 };
     try testing.expect(!flyby.orbitAround(1).bound);
     try testing.expectEqual(@as(?usize, null), flyby.serviceTarget());
 
-    // Bound, but the apoapsis reaches outside the SOI: the orbit doesn't
-    // close inside this body's frame.
+    // Technically bound (just under escape, ~277), but far enough over the
+    // circular-orbit speed (~196) that the ship is about to swing away from
+    // the body, not park at it.
     var leaky = parkedWorld();
-    leaky.ship.vel = .{ .x = 0, .y = 230 }; // just under escape (~238)
-    const leaky_orbit = leaky.orbitAround(1);
-    try testing.expect(leaky_orbit.bound and leaky_orbit.apo > leaky.planets[1].soi);
+    leaky.ship.vel = .{ .x = 0, .y = 260 };
+    try testing.expect(leaky.orbitAround(1).bound);
     try testing.expectEqual(@as(?usize, null), leaky.serviceTarget());
 
-    // Bound and well inside the SOI, but not a *low* orbit: swinging out to
-    // three times the service range is not parked at the body, whatever the
-    // SOI says. (This is what an orbit out at moon distance looks like.)
+    // A perfectly circular orbit, but out past two of the body's diameters:
+    // that's cruising near the body, not parked at it, however stable.
     var high = parkedWorld();
-    high.ship.vel = .{ .x = 0, .y = 215 };
-    const high_orbit = high.orbitAround(1);
-    const range = World.serviceRange(high.planets[1]);
-    try testing.expect(high_orbit.bound and high_orbit.apo < high.planets[1].soi);
-    try testing.expect(high_orbit.apo > range);
+    const far: f32 = 800;
+    try testing.expect(far > World.serviceRange(high.planets[1]));
+    try testing.expect(far < high.planets[1].soi);
+    high.ship.pos = .{ .x = 15000 + far, .y = 0 };
+    high.ship.vel = .{ .x = 0, .y = World.circularOrbitSpeed(high.planets[1].mass, far) };
+    try testing.expect(high.orbitAround(1).bound);
     try testing.expectEqual(@as(?usize, null), high.serviceTarget());
-    // ...and its low periapsis doesn't sneak it past the range check either.
-    try testing.expect(high_orbit.peri < range);
 
-    // Bound and contained, but the periapsis dips into the surface: that's a
-    // descent, not a parking orbit.
-    var grazing = parkedWorld();
-    grazing.ship.pos = .{ .x = 15000 + 900, .y = 0 };
-    grazing.ship.vel = .{ .x = 0, .y = 40 };
-    const grazing_orbit = grazing.orbitAround(1);
-    try testing.expect(grazing_orbit.bound and grazing_orbit.apo < grazing.planets[1].soi);
-    try testing.expect(grazing_orbit.peri < grazing.planets[1].radius);
-    try testing.expectEqual(@as(?usize, null), grazing.serviceTarget());
+    // Close in but crawling, far below circular speed: that's a fall toward
+    // the surface, not a parking orbit.
+    var falling = parkedWorld();
+    falling.ship.vel = .{ .x = 0, .y = 40 };
+    const falling_orbit = falling.orbitAround(1);
+    try testing.expect(falling_orbit.bound and falling_orbit.peri < falling.planets[1].radius);
+    try testing.expectEqual(@as(?usize, null), falling.serviceTarget());
 
     // A wreck is beyond help.
     var dead = parkedWorld();
     dead.ship.crash = 1;
     try testing.expectEqual(@as(?usize, null), dead.serviceTarget());
+}
+
+test "a body without services offers nothing however well parked" {
+    // Same parked shape as parkedWorld, but the body is marked serviceless
+    // (a gas giant): a perfect low circular orbit still gets no prompt.
+    const planets = struct {
+        const list = [_]Planet{
+            .{ .pos = .{}, .mass = 100000, .radius = 600, .soi = 40000 },
+            .{ .pos = .{ .x = 15000, .y = 0 }, .mass = 8000, .radius = 140, .soi = 2500, .services = false },
+        };
+    }.list;
+    const r: f32 = 250;
+    var world: World = .{
+        .planets = &planets,
+        .ship = .{
+            .pos = .{ .x = 15000 + r, .y = 0 },
+            .vel = .{ .x = 0, .y = World.circularOrbitSpeed(planets[1].mass, r) },
+        },
+    };
+    try testing.expectEqual(@as(?usize, null), world.serviceTarget());
 }
 
 test "parked services refill the tank and the hull, and stop when full" {

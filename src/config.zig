@@ -25,6 +25,16 @@ pub const PlanetConfig = struct {
 /// and render.SpriteSet.body all follow it.
 pub const names = [_][:0]const u8{ "sun", "mercury", "venus", "earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "phobos", "deimos", "io", "europa", "ganymede", "callisto", "pluto", "haumea", "makemake", "eris" };
 
+/// Whether the body at `idx` (canonical order, see `names`) offers orbital
+/// refuel/repair services. The gas giants don't — no surface to lift
+/// propellant from; park at one of their moons instead.
+pub fn hasServices(idx: usize) bool {
+    return switch (idx) {
+        6, 7, 8, 9 => false, // jupiter, saturn, uranus, neptune
+        else => true,
+    };
+}
+
 pub const Config = struct {
     // The sun's SOI must contain every heliocentric orbit (see `orbits` in
     // main.zig): Eris tops out near 135700. It reaches beyond that

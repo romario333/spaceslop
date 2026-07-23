@@ -324,7 +324,7 @@ fn run(init: std.process.Init.Minimal) !void {
     var planets: [cfg.names.len]sim.Planet = undefined;
     for (&planets, 0..) |*p, i| {
         const c = config.planet(i).*;
-        p.* = .{ .pos = .{}, .mass = c.mass, .radius = c.radius, .soi = c.soi, .core = c.core };
+        p.* = .{ .pos = .{}, .mass = c.mass, .radius = c.radius, .soi = c.soi, .core = c.core, .services = cfg.hasServices(i) };
     }
     var angles: [orbits.len]f32 = undefined;
     for (orbits, 0..) |o, i| angles[i] = if (o) |orb| orb.phase else 0;
