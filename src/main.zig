@@ -450,7 +450,13 @@ fn run(init: std.process.Init.Minimal) !void {
 
         // Input -> simulation intent
         const in = input.sample(steps > 0);
-        const sim_input: sim.Input = .{ .turn = in.turn, .thrust = in.thrust, .brake = in.brake };
+        const sim_input: sim.Input = .{
+            .turn = in.turn,
+            .thrust = in.thrust,
+            .brake = in.brake,
+            .refuel = in.service_fuel,
+            .repair = in.service_repair,
+        };
         if (in.reset) {
             world.ship = shipStart(planets[earth_idx]);
             trail.clear();
@@ -671,6 +677,8 @@ fn run(init: std.process.Init.Minimal) !void {
 
         const arrow_mask = edgeArrowMask(&planets, &world, cam, detail.selected);
         render.drawEdgeArrows(&planets, cam, &arrow_mask);
+        // Parked in a stable orbit: offer that body's services over it.
+        if (world.serviceTarget()) |idx| render.drawServicePrompt(world, &planets, idx, cam);
         render.drawHud(world);
         // Name tag for whatever body the cursor is over — same hit test that
         // clicking uses, and skipped over the panel, which owns its own area.

@@ -40,6 +40,10 @@ pub const Frame = struct {
     turn: f32 = 0,
     thrust: bool = false,
     brake: bool = false,
+    /// Held while parked in a stable orbit: take on fuel (E), patch the hull
+    /// (H). See sim.World.serviceTarget — anywhere else they do nothing.
+    service_fuel: bool = false,
+    service_repair: bool = false,
     reset: bool = false,
     /// Debug: refill the fuel tank (G).
     refuel: bool = false,
@@ -206,6 +210,8 @@ var syn_left: u32 = 0;
 var syn_right: u32 = 0;
 var syn_thrust: u32 = 0;
 var syn_brake: u32 = 0;
+var syn_service_fuel: u32 = 0;
+var syn_service_repair: u32 = 0;
 var syn_reset = false;
 var syn_refuel = false;
 var syn_grow_tank = false;
@@ -240,6 +246,8 @@ pub fn sample(advancing: bool) Frame {
     var f: Frame = .{
         .thrust = rl.isKeyDown(.w) or rl.isKeyDown(.up),
         .brake = rl.isKeyDown(.s) or rl.isKeyDown(.down),
+        .service_fuel = rl.isKeyDown(.e),
+        .service_repair = rl.isKeyDown(.h),
         .reset = rl.isKeyPressed(.r),
         .refuel = rl.isKeyPressed(.g),
         .grow_tank = rl.isKeyPressed(.u),
@@ -276,6 +284,14 @@ pub fn sample(advancing: bool) Frame {
         if (syn_brake > 0) {
             syn_brake -= 1;
             f.brake = true;
+        }
+        if (syn_service_fuel > 0) {
+            syn_service_fuel -= 1;
+            f.service_fuel = true;
+        }
+        if (syn_service_repair > 0) {
+            syn_service_repair -= 1;
+            f.service_repair = true;
         }
     }
     f.turn = std.math.clamp(f.turn, -1, 1);
@@ -385,6 +401,10 @@ pub fn injectKey(name: []const u8, frames: u32) bool {
         syn_thrust = frames;
     } else if (eq(name, "s") or eq(name, "down") or eq(name, "brake")) {
         syn_brake = frames;
+    } else if (eq(name, "e") or eq(name, "pump")) {
+        syn_service_fuel = frames;
+    } else if (eq(name, "h") or eq(name, "repair")) {
+        syn_service_repair = frames;
     } else if (eq(name, "r")) {
         syn_reset = true;
     } else if (eq(name, "g") or eq(name, "refuel")) {

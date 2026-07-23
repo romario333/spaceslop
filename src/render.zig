@@ -1051,6 +1051,110 @@ pub fn drawHoverLabel(idx: usize, mouse: rl.Vector2) void {
     rl.drawText(label, @intFromFloat(x + hover_pad), @intFromFloat(y + hover_pad), hover_text_size, edge_colors[idx]);
 }
 
+// --- Orbital service prompt --------------------------------------------------
+// Shown over the body the ship is parked in a stable low orbit around (see
+// sim.World.serviceTarget): the keys that refill the tank and patch the hull.
+// It hangs off the body rather than the HUD line because the offer belongs to
+// that body — fly out of its orbit and it goes away with it.
+
+const service_title_font = 13;
+const service_font = 17;
+const service_pad: f32 = 9.0;
+const service_row_gap: f32 = 5.0;
+/// Gap between the body's rendered edge and the bottom of the panel.
+const service_body_gap: f32 = 16.0;
+/// Screen band the panel is kept inside: below the status row at the top,
+/// above the hint line at the bottom. A body big enough to push its own
+/// centre off-screen would otherwise clamp the panel straight onto the HUD.
+const service_safe_top: f32 = hud_y + hud_font + 14;
+const service_safe_bottom: f32 = 40.0;
+const service_safe_side: f32 = 8.0;
+const service_key_gap = 7; // px between a row's key and its action text
+/// Below this rendered radius (px) the body is a speck the panel would dwarf,
+/// and a zoomed-out view is for reading the system, not for docking chores —
+/// so the offer stays, silently, until you zoom back in on it.
+const service_min_body_px: f32 = 12.0;
+
+const service_border: rl.Color = .{ .r = 110, .g = 205, .b = 185, .a = 220 };
+const service_fill: rl.Color = .{ .r = 12, .g = 22, .b = 30, .a = 225 };
+const service_title_color: rl.Color = .{ .r = 125, .g = 165, .b = 175, .a = 255 };
+const service_key_color: rl.Color = .{ .r = 215, .g = 235, .b = 245, .a = 255 };
+const service_action_color: rl.Color = .{ .r = 150, .g = 175, .b = 190, .a = 255 };
+/// A service that is actually running this frame.
+const service_active_color: rl.Color = .{ .r = 110, .g = 235, .b = 160, .a = 255 };
+
+var service_buf: [64]u8 = undefined;
+
+const ServiceRow = struct {
+    key: [:0]const u8,
+    action: [:0]const u8,
+    /// Running right now — the whole row lights up.
+    active: bool,
+};
+
+/// The prompt for `idx`, the body sim.World.serviceTarget picked out. Drawn in
+/// screen space, anchored above the body and clamped to the window, so it
+/// stays legible at any zoom you can still see the body at.
+///
+/// It only ever offers work there is: a full tank drops the refuel row, an
+/// intact hull drops the repair row, and with nothing left to do the panel
+/// disappears rather than sitting there as a readout of two things you don't
+/// need. Same for a view zoomed out past the body itself.
+pub fn drawServicePrompt(world: sim.World, planets: []const sim.Planet, idx: usize, cam: rl.Camera2D) void {
+    if (planets[idx].radius * cam.zoom < service_min_body_px) return;
+
+    const ship = world.ship;
+    var rows: [2]ServiceRow = undefined;
+    var row_count: usize = 0;
+    if (ship.fuel < ship.tank) {
+        rows[row_count] = .{ .key = "E", .action = "refuel", .active = ship.refuelling };
+        row_count += 1;
+    }
+    if (ship.health < sim.Ship.max_health) {
+        rows[row_count] = .{ .key = "H", .action = "repair hull", .active = ship.repairing };
+        row_count += 1;
+    }
+    if (row_count == 0) return; // fuelled up and undamaged: nothing to offer
+    const shown = rows[0..row_count];
+
+    const title = std.fmt.bufPrintZ(&service_buf, "{s} orbit", .{cfg.names[idx]}) catch cfg.names[idx];
+    // The key column is as wide as the widest key, so the action texts line up.
+    var key_w: i32 = 0;
+    var content_w: i32 = rl.measureText(title, service_title_font);
+    for (shown) |r| key_w = @max(key_w, rl.measureText(r.key, service_font));
+    for (shown) |r| content_w = @max(content_w, key_w + service_key_gap + rl.measureText(r.action, service_font));
+
+    const box_w = @as(f32, @floatFromInt(content_w)) + 2 * service_pad;
+    const rows_h = @as(f32, @floatFromInt(row_count)) * (service_font + service_row_gap) - service_row_gap;
+    const box_h = 2 * service_pad + service_title_font + service_row_gap + 2 + rows_h;
+
+    const sp = rl.getWorldToScreen2D(v(planets[idx].pos), cam);
+    const sw: f32 = @floatFromInt(rl.getScreenWidth());
+    const sh: f32 = @floatFromInt(rl.getScreenHeight());
+    const x = std.math.clamp(sp.x - box_w / 2.0, service_safe_side, @max(service_safe_side, sw - box_w - service_safe_side));
+    const y = std.math.clamp(
+        sp.y - planets[idx].radius * cam.zoom - service_body_gap - box_h,
+        service_safe_top,
+        @max(service_safe_top, sh - box_h - service_safe_bottom),
+    );
+
+    const box: rl.Rectangle = .{ .x = x, .y = y, .width = box_w, .height = box_h };
+    rl.drawRectangleRec(box, service_fill);
+    rl.drawRectangleLinesEx(box, 1, service_border);
+
+    const text_x: i32 = @intFromFloat(x + service_pad);
+    var text_y: f32 = y + service_pad;
+    rl.drawText(title, text_x, @intFromFloat(text_y), service_title_font, service_title_color);
+    text_y += service_title_font + service_row_gap + 2;
+    for (shown) |r| {
+        const key_color = if (r.active) service_active_color else service_key_color;
+        const action_color = if (r.active) service_active_color else service_action_color;
+        rl.drawText(r.key, text_x, @intFromFloat(text_y), service_font, key_color);
+        rl.drawText(r.action, text_x + key_w + service_key_gap, @intFromFloat(text_y), service_font, action_color);
+        text_y += service_font + service_row_gap;
+    }
+}
+
 var hud_buf: [192]u8 = undefined;
 
 const hud_y = 34;
