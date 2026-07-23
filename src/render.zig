@@ -1086,7 +1086,7 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
     // Hull turns red while a hazard is actively damaging the ship — rock
     // strikes have no telegraph, so the readout is the "you got hit" cue.
     const in_flare = if (world.flare) |fl| !fl.warning() and fl.contains(ship.pos) else false;
-    const hull_color: rl.Color = if (ship.hit_timer > 0 or in_flare)
+    const hull_color: rl.Color = if (!ship.alive() or ship.hit_timer > 0 or in_flare)
         .{ .r = 255, .g = 90, .b = 80, .a = 255 }
     else
         hud_color;
@@ -1113,6 +1113,21 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
 
     const follow_txt = std.fmt.bufPrintZ(&hud_buf, "follow: {s}", .{follow}) catch "";
     hudColumn(&x, follow_txt, "follow: deep space", hud_color);
+
+    // Crash banner: the ship is gone from the field, so this is the one
+    // unmissable cue for what happened and how to get flying again.
+    if (!ship.alive()) {
+        const msg: [:0]const u8 = "SHIP DESTROYED  -  press R to relaunch";
+        const size = 32;
+        const w = rl.measureText(msg, size);
+        rl.drawText(
+            msg,
+            @divTrunc(rl.getScreenWidth() - w, 2),
+            @divTrunc(rl.getScreenHeight(), 3),
+            size,
+            .{ .r = 255, .g = 90, .b = 80, .a = 255 },
+        );
+    }
 
     const controls = if (is_web)
         "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   click a planet: details + follow it"

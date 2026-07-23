@@ -97,6 +97,9 @@ pub const Planet = struct {
 pub const Ship = struct {
     /// Tank capacity, in fuel units.
     pub const max_fuel: f32 = 100.0;
+    /// Collision radius, px — roughly the sprite's half-length. Shared by
+    /// rock hits and the surface-impact check.
+    pub const radius: f32 = 15;
 
     pos: Vec2,
     vel: Vec2,
@@ -110,7 +113,8 @@ pub const Ship = struct {
     /// the ship backwards along its heading.
     braking: bool = false,
     /// Hull integrity, 0–100. Damaged by hazards (solar flares, asteroid
-    /// collisions); clamped at zero — no destruction mechanic yet.
+    /// collisions); clamped at zero. Flying into a planet's surface skips
+    /// the hull entirely and destroys the ship outright (see `crash`).
     health: f32 = 100,
     /// Seconds since the last rock hit still counting down (see
     /// hit_cooldown). Set on every collision, decays in step. Double duty:
@@ -119,6 +123,17 @@ pub const Ship = struct {
     /// ship, so this is what turns an overlap into one hit instead of
     /// damage on every step of the transit.
     hit_timer: f32 = 0,
+    /// Set when the ship is destroyed by hitting a body's surface: the index
+    /// of the planet it crashed into. The wreck stays pinned to the crash
+    /// site (riding along if the body moves) and ignores all input until an
+    /// outside reset builds a fresh Ship. Null while flying.
+    crash: ?usize = null,
+    /// Wreck position relative to the crash planet's centre, world frame.
+    crash_offset: Vec2 = .{},
+
+    pub fn alive(self: Ship) bool {
+        return self.crash == null;
+    }
 
     /// How long hit_timer runs after an impact: i-frames and feedback time.
     pub const hit_cooldown: f32 = 0.6;
@@ -186,8 +201,8 @@ pub const Flare = struct {
 /// two of these: the rocky asteroid belt between Mars and Jupiter and the icy
 /// Kuiper belt beyond Neptune; which is which is a `Band` of tuning numbers.
 pub const Belt = struct {
-    /// Collision radius of the ship, px — roughly the sprite's half-length.
-    pub const ship_radius: f32 = 15;
+    /// Collision radius of the ship (see Ship.radius).
+    pub const ship_radius: f32 = Ship.radius;
     /// Ship-to-belt distance gate: beyond every rock's reach (max wobble +
     /// max rock size + ship radius), the whole collision pass is skipped.
     pub const gate_margin: f32 = 120;
@@ -410,6 +425,25 @@ pub const World = struct {
     /// Advance the ship by `dt` seconds using semi-implicit Euler, which keeps
     /// closed orbits stable (energy oscillates rather than spiralling out).
     pub fn step(self: *World, dt: f32, input: Input) void {
+        // Ambient clocks tick first, alive or not — the world doesn't
+        // pause for a wreck.
+        if (self.flare) |*fl| {
+            fl.age += dt;
+            if (fl.expired()) self.flare = null;
+        }
+        self.ship.hit_timer = @max(0, self.ship.hit_timer - dt);
+
+        // A wreck doesn't fly: pin it to the crash site (riding along if
+        // the body moves), ignore all input, and skip every hazard.
+        if (self.ship.crash) |idx| {
+            const p = self.planets[idx];
+            self.ship.pos = p.pos.add(self.ship.crash_offset);
+            self.ship.vel = p.vel;
+            if (self.belt) |*b| b.time += dt;
+            if (self.kuiper) |*b| b.time += dt;
+            return;
+        }
+
         self.ship.angle += input.turn * turn_rate * dt;
 
         var acc = self.gravityAt(self.ship.pos);
@@ -451,21 +485,36 @@ pub const World = struct {
         self.ship.vel = self.ship.vel.add(acc.scale(dt)); // velocity first...
         self.ship.pos = self.ship.pos.add(self.ship.vel.scale(dt)); // ...then position
 
-        if (self.flare) |*fl| {
-            fl.age += dt;
-            if (fl.expired()) {
-                self.flare = null;
-            } else if (!fl.warning() and fl.contains(self.ship.pos)) {
+        // Flare damage (the flare itself was aged at the top of the step).
+        if (self.flare) |fl| {
+            if (!fl.warning() and fl.contains(self.ship.pos)) {
                 self.ship.health = @max(0, self.ship.health - Flare.damage_per_sec * dt);
             }
         }
-
-        self.ship.hit_timer = @max(0, self.ship.hit_timer - dt);
 
         // Belts: collide the ship against the actual rock swarms. The shared
         // hit cooldown means at most one strike lands per step across both.
         if (self.belt) |*belt| self.collideBelt(belt, dt);
         if (self.kuiper) |*belt| self.collideBelt(belt, dt);
+
+        // Surface impact: touching the ground destroys the ship. Only the
+        // SOI owner is checked — every body sits well inside its own SOI,
+        // so nothing else can be close enough to hit.
+        if (self.dominantIndex(self.ship.pos)) |idx| {
+            const p = self.planets[idx];
+            const off = self.ship.pos.sub(p.pos);
+            if (off.len() < p.radius + Ship.radius) {
+                self.ship.crash = idx;
+                // Pin the wreck at the surface so it doesn't render sunk.
+                self.ship.crash_offset = off.normalized().scale(p.radius + Ship.radius);
+                self.ship.pos = p.pos.add(self.ship.crash_offset);
+                self.ship.vel = p.vel;
+                self.ship.health = 0;
+                self.ship.thrusting = false;
+                self.ship.braking = false;
+                self.ship.hit_timer = Ship.hit_cooldown; // impact flash + sparks
+            }
+        }
     }
 
     /// Advance one belt's clock and collide the ship against its swarm.
@@ -622,6 +671,46 @@ test "circular orbit keeps a roughly constant radius" {
         const radius = world.ship.pos.len();
         try testing.expect(radius > r * 0.9 and radius < r * 1.1);
     }
+}
+
+test "flying into a planet destroys the ship" {
+    var world: World = .{
+        .planets = &.{.{ .pos = .{}, .mass = 1000, .radius = 100 }},
+        // Head-on dive from 200 px out; contact at 115 px.
+        .ship = .{ .pos = .{ .x = 200, .y = 0 }, .vel = .{ .x = -150, .y = 0 } },
+    };
+    stepFor(&world, 1.0);
+    try testing.expect(!world.ship.alive());
+    try testing.expectEqual(@as(f32, 0), world.ship.health);
+    // The wreck sits pinned at the surface, not sunk inside the planet.
+    try testing.expectApproxEqRel(100.0 + Ship.radius, world.ship.pos.len(), 1e-3);
+
+    // Dead ships don't fly: input is ignored and the wreck stays put.
+    const pos = world.ship.pos;
+    var t: f32 = 0;
+    while (t < 1.0) : (t += 0.01) world.step(0.01, .{ .thrust = true, .turn = 1 });
+    try testing.expectEqual(pos.x, world.ship.pos.x);
+    try testing.expectEqual(pos.y, world.ship.pos.y);
+    try testing.expect(!world.ship.thrusting);
+    try testing.expectEqual(Ship.max_fuel, world.ship.fuel);
+}
+
+test "the wreck rides a moving planet" {
+    var planets = [_]Planet{.{ .pos = .{}, .mass = 1000, .radius = 100 }};
+    var world: World = .{
+        .planets = &planets,
+        .ship = .{ .pos = .{ .x = 110, .y = 0 }, .vel = .{ .x = -50, .y = 0 } },
+    };
+    world.step(0.01, .{});
+    try testing.expect(!world.ship.alive());
+
+    // The kinematic driver moves the planet; the wreck must move with it.
+    planets[0].pos = .{ .x = 500, .y = 300 };
+    planets[0].vel = .{ .x = 10, .y = 0 };
+    world.step(0.01, .{});
+    try testing.expectApproxEqRel(500.0 + 100.0 + Ship.radius, world.ship.pos.x, 1e-4);
+    try testing.expectEqual(@as(f32, 300), world.ship.pos.y);
+    try testing.expectEqual(@as(f32, 10), world.ship.vel.x);
 }
 
 test "spheres of influence partition gravity" {

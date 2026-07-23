@@ -550,16 +550,20 @@ fn run(init: std.process.Init.Minimal) !void {
             const iss_deg = iss_angle * 180.0 / std.math.pi + 90.0;
             if (sprites) |s| s.drawSprite(s.iss, iss_pos, iss_deg, 1.0) else render.drawIssClassic(iss_pos, iss_deg);
 
-            render.drawShip(world.ship, sprites);
-            // Sparks for a moment after each rock strike (see Ship.hit_timer).
+            // A destroyed ship isn't drawn — only the impact sparks below
+            // mark the crash site until the player resets with R.
+            if (world.ship.alive()) render.drawShip(world.ship, sprites);
+            // Sparks for a moment after each hit (see Ship.hit_timer).
             if (world.ship.hit_timer > 0) {
                 render.drawBeltImpacts(world.ship.pos, world.belt.?.time);
             }
             detail.drawSelection(&planets);
 
             // Velocity vector (green) for orbital intuition.
-            const vel_end = world.ship.pos.add(world.ship.vel.scale(0.4));
-            rl.drawLineEx(v(world.ship.pos), v(vel_end), 2.0, .{ .r = 90, .g = 230, .b = 120, .a = 255 });
+            if (world.ship.alive()) {
+                const vel_end = world.ship.pos.add(world.ship.vel.scale(0.4));
+                rl.drawLineEx(v(world.ship.pos), v(vel_end), 2.0, .{ .r = 90, .g = 230, .b = 120, .a = 255 });
+            }
         }
 
         render.drawEdgeArrows(&planets, cam);
