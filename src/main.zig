@@ -232,6 +232,13 @@ fn shipStart(earth: sim.Planet) sim.Ship {
     };
 }
 
+/// Seconds until the next spontaneous flare: an exponential draw with mean
+/// `mean`, the waiting time of a Poisson process. `float` yields [0,1), so
+/// `1 - u` lands in (0,1] and the log is always finite.
+fn nextFlareWait(rand: std.Random, mean: f32) f32 {
+    return -mean * @log(1.0 - rand.float(f32));
+}
+
 /// `main` must not return errors: the std error-printing path that would
 /// handle them pulls in child-process code that doesn't compile for
 /// wasm32-emscripten (same std-lib issue that breaks Debug web builds).
@@ -375,6 +382,13 @@ fn run(init: std.process.Init.Minimal) !void {
     // entropy source, and debug-bridge runs are reproducible — the first press
     // always fires the same way, while successive presses still vary.
     var flare_prng = std.Random.DefaultPrng.init(0xF1A2E);
+    // The sun also erupts on its own. Waits are drawn from an exponential
+    // distribution (a Poisson process), so eruptions are memoryless — no
+    // countdown the pilot can learn — while averaging one per `flare_mean`
+    // of sim time. The clock only runs while the sun is quiet, so the mean
+    // measures the gap between eruptions rather than between their starts.
+    const flare_mean: f32 = 300; // 5 minutes
+    var flare_wait: f32 = nextFlareWait(flare_prng.random(), flare_mean);
 
     var cam: rl.Camera2D = .{
         .target = v(world.ship.pos),
@@ -456,6 +470,9 @@ fn run(init: std.process.Init.Minimal) !void {
         // One flare at a time; the key is ignored while one is in flight.
         if (in.flare and world.flare == null) {
             world.triggerFlare(flare_prng.random().float(f32) * std.math.tau);
+            // Forcing one restarts the wait, so a manual flare isn't chased by
+            // a spontaneous one that happened to be due.
+            flare_wait = nextFlareWait(flare_prng.random(), flare_mean);
         }
 
         // Two-finger scroll pans the view; hold cmd (super) to zoom instead.
@@ -548,6 +565,15 @@ fn run(init: std.process.Init.Minimal) !void {
             // ship physics just sees their updated positions each step (see
             // updateOrbits and sim.Planet.acc).
             updateOrbits(&planets, &angles, fixed_dt);
+            // Spontaneous eruptions run on sim time, so they honour pause,
+            // `warp` and `run` just like the rest of the simulation.
+            if (world.flare == null) {
+                flare_wait -= fixed_dt;
+                if (flare_wait <= 0) {
+                    world.triggerFlare(flare_prng.random().float(f32) * std.math.tau);
+                    flare_wait = nextFlareWait(flare_prng.random(), flare_mean);
+                }
+            }
             world.step(fixed_dt, sim_input);
             trail.push(world.ship.pos, &world);
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
