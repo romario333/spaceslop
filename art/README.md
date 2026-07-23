@@ -14,9 +14,7 @@ is placeholder vector shapes drawn in code — your art replaces those.
 art/
   README.md            <- this file (specs, sizes, rules)
   themes/
-    pixelart.md        <- style guide for the "pixelart" theme
     scifi-60s.md       <- style guide for the "scifi-60s" theme
-  pixelart/            <- finished PNG exports for the pixelart theme
   scifi-60s/           <- finished PNG exports for the scifi-60s theme
   _wip/                <- scratch space, source files, experiments (never shipped)
 ```
@@ -52,9 +50,7 @@ Ship and ISS sizes are approximate — trim the canvas to the actual drawing.
 Planet sizes are exact and non-negotiable (see zero padding below).
 
 Exports are at exactly these sizes for every theme; `art/<theme>/SCALE.txt`
-records the export multiple of this table and must contain `1`. (Pixelart is
-*drawn* at half size on a native pixel grid and exported nearest-neighbour
-doubled — see its theme doc — but the shipped PNG is still 1×.)
+records the export multiple of this table and must contain `1`.
 
 ## Technical rules
 
@@ -84,15 +80,13 @@ doubled — see its theme doc — but the shipped PNG is still 1×.)
 
 ## Themes
 
-Two themes to start. Each has its own style doc in `themes/` — read it before
-drawing that theme. The *content* (what the object is) must match across themes;
-only the *rendering style* changes.
+Each theme has its own style doc in `themes/` — read it before drawing that
+theme. The *content* (what the object is) must match across themes; only the
+*rendering style* changes.
 
-1. **pixelart** — crisp low-res pixel art, limited palette. See
-   [themes/pixelart.md](themes/pixelart.md). *No longer shipped* (dropped from
-   the game to cut web-build size); the exports here are kept as an archive.
-2. **scifi-60s** — 1960s sci-fi illustration: ink lines, retro-futurist pulp /
+1. **scifi-60s** — 1960s sci-fi illustration: ink lines, retro-futurist pulp /
    space-race poster look. See [themes/scifi-60s.md](themes/scifi-60s.md).
+   Currently the game's only art theme.
 
 ## Workflow / definition of done
 
