@@ -139,6 +139,77 @@ fn updateOrbits(planets: []sim.Planet, angles: []f32, dt: f32) void {
     }
 }
 
+/// Tunables for the edge-arrow relevance filter (see edgeArrowMask).
+/// Sun-orbiting bodies show out to this multiple of the context planet's
+/// orbit — your ring and everything inward, plus one ring out.
+const arrow_ring_factor: f32 = 1.6;
+/// A moon's arrow collapses into its planet's once the moon's orbit spans
+/// fewer than this many pixels on screen — below that both arrows would sit
+/// on the same edge spot.
+const arrow_collapse_px: f32 = 48.0;
+/// Bodies within this many screen-widths of the camera always show.
+const arrow_reach_screens: f32 = 2.0;
+
+/// Planet-level ancestor of body `i`: the body itself if it orbits the sun
+/// (or is the sun), otherwise the planet its moon hangs off.
+fn planetAncestor(i: usize) usize {
+    var idx = i;
+    while (orbits[idx]) |o| {
+        if (o.parent == 0) return idx;
+        idx = o.parent;
+    }
+    return idx; // the sun
+}
+
+/// Which bodies deserve an edge arrow this frame (see render.drawEdgeArrows).
+/// Unfiltered, all 20 off-screen bodies point at once and the edge turns to
+/// noise — near Earth nobody cares where Callisto or Makemake is. A body
+/// qualifies if any rule passes:
+///  1. Anchors: the sun, and the context body (the selected body, else the
+///     ship's SOI owner) with its parent chain — you can always find home,
+///     and a body you explicitly selected always shows.
+///  2. Moons: only those of the context planet, and only while zoomed in far
+///     enough to resolve them (see arrow_collapse_px) — Jupiter's moons never
+///     clutter the edge while you fly around Earth.
+///  3. Sun-orbiting bodies on the context planet's ring or inward, plus one
+///     ring out (arrow_ring_factor): at Earth that is Mercury through Mars,
+///     with Jupiter and everything beyond hidden. Keyed off semi-major axes,
+///     not live distances, so arrows never flicker as bodies orbit.
+///  4. Anything within arrow_reach_screens of the camera: zoomed out to
+///     system scale, the bodies just off the edge are exactly what the
+///     arrows are for, wherever the ship happens to be.
+fn edgeArrowMask(planets: []const sim.Planet, world: *const sim.World, cam: rl.Camera2D, selected: ?usize) [cfg.names.len]bool {
+    const ctx = selected orelse world.dominantIndex(world.ship.pos) orelse 0;
+    const ctx_planet = planetAncestor(ctx);
+    const focus: Vec2 = .{ .x = cam.target.x, .y = cam.target.y };
+    // Reference orbit scale for rule 3. In deep space (context = sun) use how
+    // far out the view sits, floored at Mercury so the inner system always
+    // shows.
+    const r_ctx = if (orbits[ctx_planet]) |o|
+        o.semi_major
+    else
+        @max(focus.sub(planets[0].pos).len(), orbits[1].?.semi_major);
+    const sw: f32 = @floatFromInt(rl.getScreenWidth());
+    const reach = arrow_reach_screens * sw / cam.zoom;
+
+    var mask: [cfg.names.len]bool = undefined;
+    for (planets, 0..) |p, i| {
+        mask[i] = visible: {
+            if (i == 0 or i == ctx or i == ctx_planet) break :visible true; // rule 1
+            const near = p.pos.sub(focus).len() < reach; // rule 4
+            const o = orbits[i] orelse break :visible true; // only the sun, handled above
+            if (o.parent != 0) {
+                // Rule 2 — a moon. Rule 4 can pull in a foreign moon system,
+                // but the collapse threshold still applies so an unresolvable
+                // cluster never lands on its planet's arrow.
+                break :visible (o.parent == ctx_planet or near) and o.semi_major * cam.zoom >= arrow_collapse_px;
+            }
+            break :visible o.semi_major <= arrow_ring_factor * r_ctx or near; // rules 3 + 4
+        };
+    }
+    return mask;
+}
+
 /// Ratcheted pan clamp, shared by wheel and click-drag panning. Panning back
 /// toward the followed body is always allowed; panning further out stops at
 /// max_pan — or wherever the offset already sat (`before`), since selecting a
@@ -562,7 +633,8 @@ fn run(init: std.process.Init.Minimal) !void {
             rl.drawLineEx(v(world.ship.pos), v(vel_end), 2.0, .{ .r = 90, .g = 230, .b = 120, .a = 255 });
         }
 
-        render.drawEdgeArrows(&planets, cam);
+        const arrow_mask = edgeArrowMask(&planets, &world, cam, detail.selected);
+        render.drawEdgeArrows(&planets, cam, &arrow_mask);
         render.drawHud(world, theme, detail.selected);
         // Name tag for whatever body the cursor is over — same hit test that
         // clicking uses, and skipped over the panel, which owns its own area.

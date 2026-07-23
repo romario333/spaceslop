@@ -958,7 +958,7 @@ pub fn drawPlaceholderBody(pos: Vec2, radius: f32, idx: usize) void {
     rl.drawCircleLinesV(v(pos), radius, .{ .r = tint.r, .g = tint.g, .b = tint.b, .a = 255 });
 }
 
-pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
+pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D, visible: *const [cfg.names.len]bool) void {
     const sw: f32 = @floatFromInt(rl.getScreenWidth());
     const sh: f32 = @floatFromInt(rl.getScreenHeight());
     // The band the arrows sit on, and the box a body must leave to get one.
@@ -970,9 +970,11 @@ pub fn drawEdgeArrows(planets: []const sim.Planet, cam: rl.Camera2D) void {
     const cy = sh / 2.0;
     if (right <= cx or left >= cx or bottom <= cy or top >= cy) return; // tiny window
 
-    // One arrow per off-screen body. No filtering yet — moons cluster their
-    // arrows next to their parent's, but the edge stays readable.
+    // One arrow per off-screen body that passes the relevance filter — the
+    // mask (main.edgeArrowMask) keeps the edge to the bodies that matter
+    // from the player's current context.
     for (planets, 0..) |p, i| {
+        if (!visible[i]) continue;
         const sp = rl.getWorldToScreen2D(v(p.pos), cam);
         // A body with any part of its disc inside the box needs no arrow.
         const r = p.radius * cam.zoom;
