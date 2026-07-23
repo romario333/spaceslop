@@ -50,7 +50,9 @@ settings under *Pages → Source → GitHub Actions*.
 | Key | Action |
 |-----|--------|
 | `W` / `↑` | thrust along heading |
+| `S` / `↓` | retro burn |
 | `A` `D` / `←` `→` | rotate |
+| `E` / `H` | refuel / repair the hull — only while parked in a stable *low* orbit around a planet or moon (a prompt appears over that body) |
 | scroll / two-finger swipe | pan the view |
 | click + drag | pan the view (a drag never selects; a still click still does) |
 | `⌘` + scroll | zoom |
@@ -93,7 +95,7 @@ console and call `spaceSlopDebug('state')`.
 | `clickw <wx> <wy> [hold]` | same, but world coordinates (e.g. `clickw 0 0` clicks Earth) |
 | `drag <x0> <y0> <x1> <y1> [frames]` | synthetic left-button drag: press, glide linearly over `frames` frames, release (pans the view) |
 | `dragw <wx0> <wy0> <wx1> <wy1> [frames]` | same, but world coordinates |
-| `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust`, one-shots `r/t/o/f` |
+| `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust/e/pump/h/repair`, one-shots `r/t/o/f` |
 | `wheel <dx> <dy>` | one frame of scroll (pans the view) |
 | `zoom <dy>` | one frame of cmd+scroll (zooms) |
 | `pause` / `resume` | freeze / unfreeze the simulation (rendering keeps running) |

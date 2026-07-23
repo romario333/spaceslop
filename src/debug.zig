@@ -286,7 +286,7 @@ fn dispatch(line: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!Result {
             return .done;
         };
         if (!input.injectKey(name, frames)) {
-            try w.writeAll("err unknown key (w/a/s/d/up/down/left/right/thrust/brake/r/g/refuel/u/tank/t/o/f/x/flare)");
+            try w.writeAll("err unknown key (w/a/s/d/up/down/left/right/thrust/brake/e/pump/h/repair/r/g/refuel/u/tank/t/o/f/x/flare)");
             return .done;
         }
         try w.print("ok key {s} frames {d}", .{ name, frames });
@@ -356,13 +356,22 @@ fn writeState(w: *std.Io.Writer) std.Io.Writer.Error!void {
     try writeVec(w, ship.pos);
     try w.writeAll(",\"vel\":");
     try writeVec(w, ship.vel);
-    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"fuel\":{d:.2},\"tank\":{d:.2},\"thrusting\":{},\"braking\":{},\"health\":{d:.1},\"alive\":{}}}", .{ ship.vel.len(), ship.angle, ship.fuel, ship.tank, ship.thrusting, ship.braking, ship.health, ship.alive() });
+    try w.print(",\"speed\":{d:.2},\"angle\":{d:.4},\"fuel\":{d:.2},\"tank\":{d:.2},\"thrusting\":{},\"braking\":{},\"refuelling\":{},\"repairing\":{},\"health\":{d:.1},\"alive\":{}}}", .{ ship.vel.len(), ship.angle, ship.fuel, ship.tank, ship.thrusting, ship.braking, ship.refuelling, ship.repairing, ship.health, ship.alive() });
 
     const soi_idx = h.world.dominantIndex(ship.pos);
     if (soi_idx) |i| {
         try w.print(",\"soi\":{d}", .{i});
+        // Orbit around the SOI owner, and whether it is parked well enough
+        // for that body's refuel/repair services (see World.serviceTarget).
+        const orbit = h.world.orbitAround(i);
+        try w.print(",\"orbit\":{{\"bound\":{},\"peri\":{d:.1},\"apo\":{d:.1},\"service_range\":{d:.1}}}", .{ orbit.bound, orbit.peri, orbit.apo, sim.World.serviceRange(h.planets[i]) });
     } else {
-        try w.writeAll(",\"soi\":null");
+        try w.writeAll(",\"soi\":null,\"orbit\":null");
+    }
+    if (h.world.serviceTarget()) |i| {
+        try w.print(",\"service\":{d}", .{i});
+    } else {
+        try w.writeAll(",\"service\":null");
     }
 
     if (h.world.flare) |fl| {
