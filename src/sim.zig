@@ -95,19 +95,26 @@ pub const Planet = struct {
 };
 
 pub const Ship = struct {
-    /// Tank capacity, in fuel units.
+    /// Base tank unit, in fuel units: the size of one tank section. The HUD
+    /// bar draws one unit at normal width, and the debug tank-upgrade action
+    /// grows `tank` in steps of this.
     pub const max_fuel: f32 = 100.0;
     /// Collision radius, px — roughly the sprite's half-length. Shared by
     /// rock hits and the surface-impact check.
     pub const radius: f32 = 15;
+    /// Tank capacity at spawn — three base sections.
+    pub const start_tank: f32 = 300.0;
 
     pos: Vec2,
     vel: Vec2,
     /// Facing direction in radians; thrust pushes along this heading.
     angle: f32 = 0,
+    /// Current tank capacity. The HUD fuel bar scales its width by
+    /// `tank / max_fuel`, so an upgraded tank is visibly bigger.
+    tank: f32 = start_tank,
     /// Propellant left in the tank. Each firing thruster burns
     /// `World.fuel_burn` per second; at zero the engines cut out.
-    fuel: f32 = max_fuel,
+    fuel: f32 = start_tank,
     thrusting: bool = false,
     /// Retro thrusters firing: the pair of small nose thrusters that push
     /// the ship backwards along its heading.
@@ -692,7 +699,7 @@ test "flying into a planet destroys the ship" {
     try testing.expectEqual(pos.x, world.ship.pos.x);
     try testing.expectEqual(pos.y, world.ship.pos.y);
     try testing.expect(!world.ship.thrusting);
-    try testing.expectEqual(Ship.max_fuel, world.ship.fuel);
+    try testing.expectEqual(Ship.start_tank, world.ship.fuel);
 }
 
 test "the wreck rides a moving planet" {
@@ -947,16 +954,16 @@ test "rockState: wobble and drift produce matching analytic velocity" {
 test "each firing thruster burns fuel; both together burn double" {
     var one: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
     one.step(0.1, .{ .thrust = true });
-    try testing.expectApproxEqRel(Ship.max_fuel - World.fuel_burn * 0.1, one.ship.fuel, 1e-5);
+    try testing.expectApproxEqRel(Ship.start_tank - World.fuel_burn * 0.1, one.ship.fuel, 1e-5);
 
     var both: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
     both.step(0.1, .{ .thrust = true, .brake = true });
-    try testing.expectApproxEqRel(Ship.max_fuel - 2.0 * World.fuel_burn * 0.1, both.ship.fuel, 1e-5);
+    try testing.expectApproxEqRel(Ship.start_tank - 2.0 * World.fuel_burn * 0.1, both.ship.fuel, 1e-5);
 
     // Coasting is free.
     var coast: World = .{ .planets = &.{}, .ship = .{ .pos = .{}, .vel = .{} } };
     coast.step(0.1, .{ .turn = 1 });
-    try testing.expectEqual(Ship.max_fuel, coast.ship.fuel);
+    try testing.expectEqual(Ship.start_tank, coast.ship.fuel);
 }
 
 test "empty tank kills thrust and never goes negative" {
