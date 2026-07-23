@@ -33,23 +33,23 @@ The four Galilean moons, the four inner moons, and the largest irregular.
 - [x] **Europa** — Art: yes; Sim: yes (`europa`)
 - [x] **Ganymede** — Art: yes; Sim: yes (`ganymede`)
 - [x] **Callisto** — Art: yes; Sim: yes (`callisto`)
-- [ ] **Amalthea** — Art: no; Sim: no
-- [ ] **Himalia** — Art: no; Sim: no
-- [ ] **Thebe** — Art: no; Sim: no
-- [ ] **Metis** — Art: no; Sim: no
-- [ ] **Adrastea** — Art: no; Sim: no
+- [ ] **Amalthea** — Art: yes (`art/scifi-60s/amalthea.png`); Sim: no
+- [ ] **Himalia** — Art: yes (`art/scifi-60s/himalia.png`); Sim: no
+- [ ] **Thebe** — Art: yes (`art/scifi-60s/thebe.png`); Sim: no
+- [ ] **Metis** — Art: yes (`art/scifi-60s/metis.png`); Sim: no
+- [ ] **Adrastea** — Art: yes (`art/scifi-60s/adrastea.png`); Sim: no
 
 ### Saturn (9)
 
-- [ ] **Titan** — Art: no; Sim: no
-- [ ] **Enceladus** — Art: no; Sim: no
-- [ ] **Mimas** — Art: no; Sim: no
-- [ ] **Rhea** — Art: no; Sim: no
-- [ ] **Iapetus** — Art: no; Sim: no
-- [ ] **Dione** — Art: no; Sim: no
-- [ ] **Tethys** — Art: no; Sim: no
-- [ ] **Hyperion** — Art: no; Sim: no
-- [ ] **Phoebe** — Art: no; Sim: no
+- [ ] **Titan** — Art: yes (`art/scifi-60s/titan.png`); Sim: no
+- [ ] **Enceladus** — Art: yes (`art/scifi-60s/enceladus.png`); Sim: no
+- [ ] **Mimas** — Art: yes (`art/scifi-60s/mimas.png`); Sim: no
+- [ ] **Rhea** — Art: yes (`art/scifi-60s/rhea.png`); Sim: no
+- [ ] **Iapetus** — Art: yes (`art/scifi-60s/iapetus.png`); Sim: no
+- [ ] **Dione** — Art: yes (`art/scifi-60s/dione.png`); Sim: no
+- [ ] **Tethys** — Art: yes (`art/scifi-60s/tethys.png`); Sim: no
+- [ ] **Hyperion** — Art: yes (`art/scifi-60s/hyperion.png`); Sim: no
+- [ ] **Phoebe** — Art: yes (`art/scifi-60s/phoebe.png`); Sim: no
 
 ### Uranus (5 — the classical five)
 
