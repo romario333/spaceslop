@@ -1055,66 +1055,121 @@ var hud_buf: [192]u8 = undefined;
 
 const hud_y = 34;
 const hud_font = 20;
-const hud_gap = 26; // space between status columns, in px
+const hud_label_font = 16;
+const hud_gap = 30; // space between status columns, in px
 const hud_color: rl.Color = .{ .r = 200, .g = 220, .b = 240, .a = 255 };
+const hud_label_color: rl.Color = .{ .r = 125, .g = 140, .b = 165, .a = 255 };
+const hud_alert_color: rl.Color = .{ .r = 255, .g = 90, .b = 80, .a = 255 };
 /// Fuel readout turns amber below this, to nudge you toward planning a
 /// return or a cheaper route while there's still fuel to do it with.
 const fuel_warn = 50.0;
 /// ...and red below this, where only a short trim burn is left.
 const fuel_low = 20.0;
 
-/// Draw one status-line column and advance `x` past it. The column is as
-/// wide as `widest` — the longest string this field can ever hold — so a
-/// value that gains a digit (speed ticking past 999, a longer SOI name)
-/// grows into its own slack instead of shoving every later field sideways.
-fn hudColumn(x: *i32, text: [:0]const u8, widest: [:0]const u8, color: rl.Color) void {
-    rl.drawText(text, x.*, hud_y, hud_font, color);
+/// Draw one status column — small dim label, bright value — and advance `x`
+/// past it. The value slot is as wide as `widest` — the longest string the
+/// field can ever hold — so a value that gains a digit grows into its own
+/// slack instead of shoving every later field sideways.
+fn hudColumn(x: *i32, label: [:0]const u8, value: [:0]const u8, widest: [:0]const u8, color: rl.Color) void {
+    rl.drawText(label, x.*, hud_y + hud_font - hud_label_font, hud_label_font, hud_label_color);
+    x.* += rl.measureText(label, hud_label_font) + 7;
+    rl.drawText(value, x.*, hud_y, hud_font, color);
     x.* += rl.measureText(widest, hud_font) + hud_gap;
 }
 
-pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
+// --- Bottom hint line --------------------------------------------------------
+
+const hint_font = 18;
+const hint_key_color: rl.Color = .{ .r = 205, .g = 220, .b = 240, .a = 255 };
+const hint_action_color: rl.Color = .{ .r = 135, .g = 150, .b = 175, .a = 255 };
+const hint_debug_key_color: rl.Color = .{ .r = 150, .g = 162, .b = 185, .a = 255 };
+const hint_debug_action_color: rl.Color = .{ .r = 105, .g = 117, .b = 140, .a = 255 };
+
+const Hint = struct { key: [:0]const u8, action: [:0]const u8 };
+
+/// One hint group: each entry as a bright key followed by a dim action.
+fn drawHints(x: *i32, y: i32, hints: []const Hint, key_color: rl.Color, action_color: rl.Color) void {
+    for (hints) |h| {
+        rl.drawText(h.key, x.*, y, hint_font, key_color);
+        x.* += rl.measureText(h.key, hint_font) + 6;
+        rl.drawText(h.action, x.*, y, hint_font, action_color);
+        x.* += rl.measureText(h.action, hint_font) + 13;
+    }
+}
+
+/// Thin vertical rule between hint groups.
+fn drawHintDivider(x: *i32, y: i32) void {
+    rl.drawRectangle(x.*, y + 2, 1, hint_font - 3, .{ .r = 120, .g = 135, .b = 160, .a = 110 });
+    x.* += 14;
+}
+
+pub fn drawHud(world: sim.World) void {
     const ship = world.ship;
     const speed = ship.vel.len();
-    const soi_idx = world.dominantIndex(ship.pos);
-    const soi_name: [:0]const u8 = if (soi_idx) |i| cfg.names[i] else "deep space";
 
-    rl.drawFPS(10, 10);
+    var x: i32 = 12;
 
-    const follow: [:0]const u8 = if (followed) |i| cfg.names[i] else "ship";
-    var x: i32 = 10;
-
-    // Each column formats into the shared buffer and is drawn before the
-    // next one reuses it.
-    // Hull turns red while a hazard is actively damaging the ship — rock
-    // strikes have no telegraph, so the readout is the "you got hit" cue.
-    const in_flare = if (world.flare) |fl| !fl.warning() and fl.contains(ship.pos) else false;
-    const hull_color: rl.Color = if (!ship.alive() or ship.hit_timer > 0 or in_flare)
-        .{ .r = 255, .g = 90, .b = 80, .a = 255 }
-    else
-        hud_color;
-    const hull_txt = std.fmt.bufPrintZ(&hud_buf, "hull: {d:.0}", .{ship.health}) catch "";
-    hudColumn(&x, hull_txt, "hull: 100", hull_color);
-
-    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "speed: {d:.1}", .{speed}) catch "";
-    hudColumn(&x, speed_txt, "speed: 99999.9", hud_color);
-
+    // Each value formats into the shared buffer and is drawn before the
+    // next one reuses it. Fuel leads: it's the value flight decisions hang
+    // on, so it gets the first slot and a gauge bar.
     const fuel_color: rl.Color = if (ship.fuel < fuel_low)
-        .{ .r = 255, .g = 90, .b = 80, .a = 255 }
+        hud_alert_color
     else if (ship.fuel < fuel_warn)
         .{ .r = 255, .g = 190, .b = 70, .a = 255 }
     else
         hud_color;
-    const fuel_txt = std.fmt.bufPrintZ(&hud_buf, "fuel: {d:.0}/{d:.0}", .{ ship.fuel, sim.Ship.max_fuel }) catch "";
-    hudColumn(&x, fuel_txt, "fuel: 100/100", fuel_color);
+    rl.drawText("fuel", x, hud_y + hud_font - hud_label_font, hud_label_font, hud_label_color);
+    x += rl.measureText("fuel", hud_label_font) + 7;
+    // The bar's width tracks capacity — a base (100-unit) tank is 52 px and
+    // each debug upgrade stretches it, so a bigger tank reads at a glance.
+    const bar_w: i32 = @intFromFloat(52.0 * ship.tank / sim.Ship.max_fuel);
+    const bar_h = 8;
+    const bar_y = hud_y + 6;
+    const fill: i32 = @intFromFloat(@as(f32, @floatFromInt(bar_w)) * std.math.clamp(ship.fuel / ship.tank, 0.0, 1.0));
+    rl.drawRectangle(x, bar_y, bar_w, bar_h, .{ .r = 60, .g = 72, .b = 95, .a = 200 });
+    rl.drawRectangle(x, bar_y, fill, bar_h, fuel_color);
+    x += bar_w + 8;
+    const fuel_txt = std.fmt.bufPrintZ(&hud_buf, "{d:.0}/{d:.0}", .{ ship.fuel, ship.tank }) catch "";
+    rl.drawText(fuel_txt, x, hud_y, hud_font, fuel_color);
+    // Reserve the slot for a full tank's worth of digits at the current
+    // capacity, so the readout only shifts when the tank itself grows.
+    const fuel_widest = std.fmt.bufPrintZ(&hud_buf, "{d:.0}/{d:.0}", .{ ship.tank, ship.tank }) catch "";
+    x += rl.measureText(fuel_widest, hud_font) + hud_gap;
 
-    const soi_txt = std.fmt.bufPrintZ(&hud_buf, "soi: {s}", .{soi_name}) catch "";
-    hudColumn(&x, soi_txt, "soi: deep space", hud_color);
+    const speed_txt = std.fmt.bufPrintZ(&hud_buf, "{d:.1}", .{speed}) catch "";
+    hudColumn(&x, "speed", speed_txt, "99999.9", hud_color);
 
-    const theme_txt = std.fmt.bufPrintZ(&hud_buf, "theme: {s}", .{theme.label()}) catch "";
-    hudColumn(&x, theme_txt, "theme: scifi-60s", hud_color);
+    // Hull turns red while a hazard is actively damaging the ship — rock
+    // strikes have no telegraph, so the readout is the "you got hit" cue.
+    const in_flare = if (world.flare) |fl| !fl.warning() and fl.contains(ship.pos) else false;
+    const hull_color: rl.Color = if (!ship.alive() or ship.hit_timer > 0 or in_flare) hud_alert_color else hud_color;
+    const hull_txt = std.fmt.bufPrintZ(&hud_buf, "{d:.0}", .{ship.health}) catch "";
+    hudColumn(&x, "hull", hull_txt, "100", hull_color);
 
-    const follow_txt = std.fmt.bufPrintZ(&hud_buf, "follow: {s}", .{follow}) catch "";
-    hudColumn(&x, follow_txt, "follow: deep space", hud_color);
+    // Bottom hint line, in three groups: flying, app controls, debug.
+    const hint_y = rl.getScreenHeight() - 28; // live height so it sits at the bottom in fullscreen
+    var hx: i32 = 12;
+    drawHints(&hx, hint_y, &.{
+        .{ .key = "arrows", .action = "control ship" },
+        .{ .key = "cmd+wheel", .action = "zoom" },
+        .{ .key = "drag", .action = "pan" },
+    }, hint_key_color, hint_action_color);
+    drawHintDivider(&hx, hint_y);
+    const app_hints: []const Hint = if (is_web) &.{
+        .{ .key = "R", .action = "reset" },
+        .{ .key = "T", .action = "theme" },
+    } else &.{
+        .{ .key = "F", .action = "fullscreen" },
+        .{ .key = "R", .action = "reset" },
+        .{ .key = "T", .action = "theme" },
+    };
+    drawHints(&hx, hint_y, app_hints, hint_key_color, hint_action_color);
+    drawHintDivider(&hx, hint_y);
+    drawHints(&hx, hint_y, &.{
+        .{ .key = "O", .action = "soi" },
+        .{ .key = "X", .action = "solar flare" },
+        .{ .key = "U", .action = "grow tank" },
+    }, hint_debug_key_color, hint_debug_action_color);
 
     // Crash banner: the ship is gone from the field, so this is the one
     // unmissable cue for what happened and how to get flying again.
@@ -1131,15 +1186,7 @@ pub fn drawHud(world: sim.World, theme: Theme, followed: ?usize) void {
         );
     }
 
-    const controls = if (is_web)
-        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   click a planet: details + follow it"
-    else
-        "W/Up: thrust   S/Down: brake   A/D or Left/Right: turn   wheel: zoom   drag: pan   O: SOI   R: reset   T: theme   X: solar flare   F: fullscreen   click a planet: details + follow it";
-    rl.drawText(
-        controls,
-        10,
-        rl.getScreenHeight() - 28, // live height so it sits at the bottom in fullscreen
-        18,
-        .{ .r = 150, .g = 165, .b = 190, .a = 255 },
-    );
+    // fps readout in the top-right corner, out of the hint line's way.
+    const fps_txt = std.fmt.bufPrintZ(&hud_buf, "{d} fps", .{rl.getFPS()}) catch "";
+    rl.drawText(fps_txt, rl.getScreenWidth() - rl.measureText(fps_txt, hint_font) - 12, 10, hint_font, hint_debug_action_color);
 }

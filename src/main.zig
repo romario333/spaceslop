@@ -443,7 +443,13 @@ fn run(init: std.process.Init.Minimal) !void {
             pan_offset = .{};
         }
         // Debug convenience: top the tank back up without resetting the orbit.
-        if (in.refuel) world.ship.fuel = sim.Ship.max_fuel;
+        if (in.refuel) world.ship.fuel = world.ship.tank;
+        // Debug: bolt on another 100-unit tank section, delivered full. The
+        // HUD bar widens with capacity, so each press visibly grows it.
+        if (in.grow_tank) {
+            world.ship.tank += 100;
+            world.ship.fuel += 100;
+        }
         if (!is_web and in.fullscreen) rl.toggleFullscreen();
         if (in.cycle_theme) theme = theme.next();
         if (in.toggle_soi) show_soi = !show_soi;
@@ -639,14 +645,13 @@ fn run(init: std.process.Init.Minimal) !void {
 
         const arrow_mask = edgeArrowMask(&planets, &world, cam, detail.selected);
         render.drawEdgeArrows(&planets, cam, &arrow_mask);
-        render.drawHud(world, theme, detail.selected);
+        render.drawHud(world);
         // Name tag for whatever body the cursor is over — same hit test that
         // clicking uses, and skipped over the panel, which owns its own area.
-        if (!detail.containsPoint(mouse.pos)) {
-            if (DetailPanel.pick(&planets, cam, mouse.pos)) |idx| {
-                render.drawHoverLabel(idx, mouse.pos);
-            }
-        }
+        // A hand cursor marks the body as clickable.
+        const hovered: ?usize = if (detail.containsPoint(mouse.pos)) null else DetailPanel.pick(&planets, cam, mouse.pos);
+        rl.setMouseCursor(if (hovered != null) .pointing_hand else .default);
+        if (hovered) |idx| render.drawHoverLabel(idx, mouse.pos);
         detail.draw(&planets);
 
         // Runs before the deferred endDrawing above swaps buffers, so a

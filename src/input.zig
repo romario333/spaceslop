@@ -43,6 +43,8 @@ pub const Frame = struct {
     reset: bool = false,
     /// Debug: refill the fuel tank (G).
     refuel: bool = false,
+    /// Debug: grow the fuel tank by 100 units, filled (U).
+    grow_tank: bool = false,
     fullscreen: bool = false,
     cycle_theme: bool = false,
     toggle_soi: bool = false,
@@ -206,6 +208,7 @@ var syn_thrust: u32 = 0;
 var syn_brake: u32 = 0;
 var syn_reset = false;
 var syn_refuel = false;
+var syn_grow_tank = false;
 var syn_fullscreen = false;
 var syn_theme = false;
 var syn_soi = false;
@@ -239,6 +242,7 @@ pub fn sample(advancing: bool) Frame {
         .brake = rl.isKeyDown(.s) or rl.isKeyDown(.down),
         .reset = rl.isKeyPressed(.r),
         .refuel = rl.isKeyPressed(.g),
+        .grow_tank = rl.isKeyPressed(.u),
         .fullscreen = rl.isKeyPressed(.f),
         .cycle_theme = rl.isKeyPressed(.t),
         .toggle_soi = rl.isKeyPressed(.o),
@@ -283,6 +287,10 @@ pub fn sample(advancing: bool) Frame {
     if (syn_refuel) {
         syn_refuel = false;
         f.refuel = true;
+    }
+    if (syn_grow_tank) {
+        syn_grow_tank = false;
+        f.grow_tank = true;
     }
     if (syn_fullscreen) {
         syn_fullscreen = false;
@@ -381,6 +389,8 @@ pub fn injectKey(name: []const u8, frames: u32) bool {
         syn_reset = true;
     } else if (eq(name, "g") or eq(name, "refuel")) {
         syn_refuel = true;
+    } else if (eq(name, "u") or eq(name, "tank")) {
+        syn_grow_tank = true;
     } else if (eq(name, "f")) {
         syn_fullscreen = true;
     } else if (eq(name, "t")) {
