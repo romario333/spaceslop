@@ -59,6 +59,7 @@ settings under *Pages → Source → GitHub Actions*.
 | `R` | reset ship |
 | `T` | cycle visual theme (scifi-60s → classic) |
 | `O` | toggle sphere-of-influence rings (off by default) |
+| `P` | toggle the predicted flight path (on by default) — the mint line tracing where the current coast goes, with a red ✗ where it would hit a surface |
 | hover a planet | show its name next to the cursor |
 | click a planet | open the detail panel; its debug section has live sliders for mass, SOI and size |
 
@@ -95,7 +96,7 @@ console and call `spaceSlopDebug('state')`.
 | `clickw <wx> <wy> [hold]` | same, but world coordinates (e.g. `clickw 0 0` clicks Earth) |
 | `drag <x0> <y0> <x1> <y1> [frames]` | synthetic left-button drag: press, glide linearly over `frames` frames, release (pans the view) |
 | `dragw <wx0> <wy0> <wx1> <wy1> [frames]` | same, but world coordinates |
-| `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust/e/pump/h/repair`, one-shots `r/t/o/f` |
+| `key <name> [frames]` | hold a key for n frames: `w/a/d/up/left/right/thrust/e/pump/h/repair`, one-shots `r/t/o/f/p` |
 | `wheel <dx> <dy>` | one frame of scroll (pans the view) |
 | `zoom <dy>` | one frame of cmd+scroll (zooms) |
 | `pause` / `resume` | freeze / unfreeze the simulation (rendering keeps running) |

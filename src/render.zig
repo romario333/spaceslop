@@ -592,50 +592,19 @@ var orbit_cache_ready = [_]bool{false} ** edge_colors.len;
 const orbit_alpha: u8 = 46;
 
 /// Fixed-size ring buffer of recent ship positions, drawn as a fading trail.
-/// Each point is stored relative to the SOI body that dominated it when it was
-/// recorded (absolute when in deep space), so the trail rides along with the
+/// Each point is a sim.FramePoint — stored relative to the SOI body that
+/// dominated it when it was recorded, so the trail rides along with the
 /// moving planet instead of being left behind in world space. Points keep
 /// their anchor forever, so crossing an SOI boundary never snaps the trail.
-/// In the outer band of an SOI a point is stored in the enclosing frame too
-/// and the two are blended, so the seam deforms as a smooth curve instead of
-/// kinking at the segment where the anchor switches.
 pub const Trail = struct {
     const cap = 4000;
-    /// Fraction of the SOI radius where blending toward the enclosing frame
-    /// begins; at the edge itself a point rides the enclosing frame entirely,
-    /// which matches the first point recorded on the other side.
-    const blend_band = 0.8;
 
-    const Point = struct {
-        /// Offset from the anchor body (absolute position when anchor is null).
-        off: Vec2,
-        /// Offset from the enclosing body (absolute when enclosing is null).
-        off_outer: Vec2,
-        anchor: ?usize,
-        enclosing: ?usize,
-        /// 1 = fully anchor frame, 0 = fully enclosing frame.
-        blend: f32,
-    };
-
-    points: [cap]Point = undefined,
+    points: [cap]sim.FramePoint = undefined,
     head: usize = 0,
     len: usize = 0,
 
     pub fn push(self: *Trail, p: Vec2, world: *const sim.World) void {
-        var pt = Point{ .off = p, .off_outer = p, .anchor = null, .enclosing = null, .blend = 1 };
-        if (world.dominantIndex(p)) |a| {
-            const body = world.planets[a];
-            pt.anchor = a;
-            pt.off = p.sub(body.pos);
-            const edge = p.sub(body.pos).len() / body.soi;
-            const raw = std.math.clamp((1.0 - edge) / (1.0 - blend_band), 0.0, 1.0);
-            pt.blend = raw * raw * (3.0 - 2.0 * raw);
-            if (pt.blend < 1.0) {
-                pt.enclosing = world.enclosingIndex(p, a);
-                if (pt.enclosing) |e| pt.off_outer = p.sub(world.planets[e].pos);
-            }
-        }
-        self.points[self.head] = pt;
+        self.points[self.head] = sim.FramePoint.capture(world, p);
         self.head = (self.head + 1) % cap;
         if (self.len < cap) self.len += 1;
     }
@@ -646,11 +615,7 @@ pub const Trail = struct {
     }
 
     fn worldPos(self: *const Trail, idx: usize, planets: []const sim.Planet) Vec2 {
-        const pt = self.points[idx];
-        const inner = if (pt.anchor) |a| planets[a].pos.add(pt.off) else pt.off;
-        if (pt.blend >= 1.0) return inner;
-        const outer = if (pt.enclosing) |e| planets[e].pos.add(pt.off_outer) else pt.off_outer;
-        return outer.add(inner.sub(outer).scale(pt.blend));
+        return self.points[idx].resolve(planets);
     }
 
     pub fn draw(self: *const Trail, planets: []const sim.Planet, cam: rl.Camera2D) void {
@@ -692,6 +657,48 @@ pub const Trail = struct {
         rl.gl.rlEnd();
     }
 };
+
+/// The predicted coast path (sim.Trajectory): a thin line running from the
+/// ship into the future, brightest now and fading as the forecast gets less
+/// certain. Mint green — kin to the velocity vector, whose promise it
+/// extends — against the trail's ice blue, so past and future never read as
+/// the same line. A coast that ends on a surface gets a small impact cross.
+pub fn drawTrajectory(traj: *const sim.Trajectory, planets: []const sim.Planet, cam: rl.Camera2D) void {
+    if (traj.count < 2) return;
+    const view_w = @as(f32, @floatFromInt(rl.getScreenWidth())) / cam.zoom;
+    const view_h = @as(f32, @floatFromInt(rl.getScreenHeight())) / cam.zoom;
+    const left = cam.target.x - view_w / 2.0;
+    const right = cam.target.x + view_w / 2.0;
+    const top = cam.target.y - view_h / 2.0;
+    const bottom = cam.target.y + view_h / 2.0;
+
+    // One raw RL_LINES batch, culled per segment like the trail: both
+    // endpoints strictly beyond the same view edge can't cross the screen.
+    rl.gl.rlBegin(rl.gl.rl_lines);
+    var a = traj.points[0].resolve(planets);
+    for (1..traj.count) |i| {
+        const b = traj.points[i].resolve(planets);
+        const out = (a.x < left and b.x < left) or (a.x > right and b.x > right) or
+            (a.y < top and b.y < top) or (a.y > bottom and b.y > bottom);
+        if (!out) {
+            const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(traj.count));
+            rl.gl.rlColor4ub(150, 235, 180, @intFromFloat(160.0 - t * 130.0));
+            rl.gl.rlVertex2f(a.x, a.y);
+            rl.gl.rlVertex2f(b.x, b.y);
+        }
+        a = b;
+    }
+    rl.gl.rlEnd();
+
+    // Impact cross at the crash site, sized in screen px so it reads at any
+    // zoom. `a` is already the last point — where the coast meets the ground.
+    if (traj.impact != null) {
+        const s = 5.0 / cam.zoom;
+        const color: rl.Color = .{ .r = 255, .g = 120, .b = 90, .a = 220 };
+        rl.drawLineEx(.{ .x = a.x - s, .y = a.y - s }, .{ .x = a.x + s, .y = a.y + s }, 2.0 / cam.zoom, color);
+        rl.drawLineEx(.{ .x = a.x - s, .y = a.y + s }, .{ .x = a.x + s, .y = a.y - s }, 2.0 / cam.zoom, color);
+    }
+}
 
 /// The ship renders larger than the theme's base scale so it stays readable
 /// against the (much bigger) planets.
