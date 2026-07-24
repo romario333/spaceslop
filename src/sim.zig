@@ -285,23 +285,23 @@ pub const Belt = struct {
         /// How many rocks fillRocks seeds the band with.
         count: usize,
 
-        /// The classic belt, in the gap between Mars and Jupiter. Inner hugs
-        /// Mars' apoapsis-plus-SOI (21000 + 1500); outer stops shy of
-        /// Jupiter's orbit. Jupiter's big SOI dips into the outer band at its
-        /// periapsis bearing — unavoidable in this compressed system, and
-        /// harmless: gravity handover and rock collisions are independent
-        /// concerns. mid_omega matches the planets' arcade rate at r=24000
-        /// (between Mars' 0.0004 and Jupiter's 0.00024). At 4500 rocks a
-        /// 3000-px crossing expects ~1.7 hits: dodging is possible,
+        /// The classic belt, at its real place between Mars and Jupiter:
+        /// 2.2–3.2 AU with Earth's orbit as 1 AU = 14500 px (see `orbits` in
+        /// main.zig). Both edges have clear water at real spacing — Mars
+        /// tops out near 25200, Jupiter's periapsis-minus-SOI begins around
+        /// 66800. mid_omega matches the planets' arcade rate at r=39000
+        /// (between Mars' 0.00032 and Jupiter's 0.000051). At 9000 rocks a
+        /// 14500-px crossing expects ~1.5 hits: dodging is possible,
         /// complacency is punished.
-        pub const asteroid: Band = .{ .inner = 22500, .outer = 25500, .mid_omega = 0.0003, .count = 4500 };
-        /// The Kuiper belt, past Neptune's apoapsis-plus-SOI (~57000) and
-        /// deep into the sun's outer SOI — a full tank barely coasts to its
-        /// inner rim, so this is frontier scenery more than a gauntlet. Six
-        /// times the asteroid belt's width with fewer rocks: sparse like the
-        /// real thing, a straight crossing expects only ~0.4 hits. mid_omega
-        /// is the same arcade Kepler rate carried out to r=69000.
-        pub const kuiper: Band = .{ .inner = 60000, .outer = 78000, .mid_omega = 0.000062, .count = 4000 };
+        pub const asteroid: Band = .{ .inner = 31900, .outer = 46400, .mid_omega = 0.00014, .count = 9000 };
+        /// The Kuiper belt at its real 30–50 AU, past Neptune's
+        /// apoapsis-plus-SOI (~444600) and deep into the sun's outer SOI —
+        /// a full tank from Earth tops out far short of its inner rim, so
+        /// this is frontier scenery more than a gauntlet. Even 12000 rocks
+        /// over this vast an annulus is sparse like the real thing: a
+        /// straight crossing expects only ~0.14 hits. mid_omega is the same
+        /// arcade Kepler rate carried out to r=580000.
+        pub const kuiper: Band = .{ .inner = 435000, .outer = 725000, .mid_omega = 0.0000024, .count = 12000 };
     };
 
     pub const Rock = struct {
@@ -421,14 +421,16 @@ pub const World = struct {
     /// Propellant burned per second by each firing thruster — the main
     /// engine and the retro pair each cost this, so holding both burns
     /// double. A full tank is ~1.8 s of single-thruster burn: ~127 px/s of
-    /// delta-v, sized to fit between the system's landmark costs (measured
-    /// via the debug bridge, steered prograde burns from the spawn orbit):
-    /// a Mars-crossing ellipse takes ~90 px/s (capture assist handles
-    /// arrival), Saturn ~118, Uranus ~127 — right at the tank's edge — and
-    /// a full tank flown perfectly coasts out to only ~72000 px of the
-    /// sun's 150000 px SOI before falling back, ~10 px/s short at SOI exit.
-    /// Inner planets through Saturn are reachable one-way with reserve, but
-    /// no single tank escapes the system (gravity assists notwithstanding).
+    /// delta-v. Measured via the debug bridge (steered prograde burns from
+    /// the spawn orbit), a Mars-crossing ellipse takes ~90 px/s (capture
+    /// assist handles arrival), and a full tank flown perfectly coasts out
+    /// to only ~72000 px before falling back — that measurement predates the
+    /// realistic re-spacing but still holds, since the sun's mass and
+    /// Earth's orbit are unchanged. Under real AU spacing 72000 clears Mars
+    /// (22100) and the asteroid belt but falls short of even Jupiter
+    /// (75400): the giants and beyond are refuel-hop territory, not
+    /// single-tank trips, and no tank comes anywhere near escaping the
+    /// sun's 1550000 px SOI (gravity assists notwithstanding).
     pub const fuel_burn: f32 = 55.0;
     /// Propellant taken on per second while parked at a body (see
     /// serviceTarget) — a shade over twice the burn rate, so topping up a
@@ -822,7 +824,7 @@ pub const Trajectory = struct {
     pub const max_bodies = 32;
     /// How far ahead an unbound (escape / deep space) coast is integrated,
     /// sim-seconds. Sized to cover a heliocentric hop to a neighbouring
-    /// planet (a Mars transfer half-ellipse is ~6 min of sim time).
+    /// planet (a Mars transfer half-ellipse is ~6.6 min of sim time).
     pub const max_horizon: f32 = 420.0;
     /// A bound orbit is predicted for just over one revolution: enough to
     /// close the loop on screen without moiré from overdrawn precessing laps.
@@ -1236,8 +1238,8 @@ test "flare damage clamps health at zero" {
 }
 
 // A lone stationary boulder mid-belt (omega and wobble zero), at bearing 0:
-// its centre sits at (24000, 0). Contact happens at distance size+ship_radius.
-const test_rock = [_]Belt.Rock{.{ .orbit_r = 24000, .size = 20 }};
+// its centre sits at (39150, 0). Contact happens at distance size+ship_radius.
+const test_rock = [_]Belt.Rock{.{ .orbit_r = 39150, .size = 20 }};
 
 test "flying through a rock: one hit, trajectory untouched" {
     var world: World = .{
@@ -1246,7 +1248,7 @@ test "flying through a rock: one hit, trajectory untouched" {
         // 100 px/s straight at the rock from 60 px out (contact at 35 px).
         // The 70 px contact zone takes 0.7 s to transit — longer than the
         // 0.6 s cooldown, so the separating check must carry the last leg.
-        .ship = .{ .pos = .{ .x = 24000 - 60, .y = 0 }, .vel = .{ .x = 100, .y = 0 } },
+        .ship = .{ .pos = .{ .x = 39150 - 60, .y = 0 }, .vel = .{ .x = 100, .y = 0 } },
     };
     stepFor(&world, 2.0);
     // Head-on at 100 px/s into a size-20 rock: one hit of exactly hitDamage.
@@ -1254,7 +1256,7 @@ test "flying through a rock: one hit, trajectory untouched" {
     // No deflection: same velocity, and the ship came out the far side.
     try testing.expectEqual(@as(f32, 100), world.ship.vel.x);
     try testing.expectEqual(@as(f32, 0), world.ship.vel.y);
-    try testing.expect(world.ship.pos.x > 24000 + 35);
+    try testing.expect(world.ship.pos.x > 39150 + 35);
 
     // Well past the rock: no further hits, and the hit flash has decayed.
     const after = world.ship.health;
@@ -1267,7 +1269,7 @@ test "a hit raises the hit flash timer" {
     var world: World = .{
         .planets = &.{},
         .belt = .{ .rocks = &test_rock },
-        .ship = .{ .pos = .{ .x = 24000 - 40, .y = 0 }, .vel = .{ .x = 100, .y = 0 } },
+        .ship = .{ .pos = .{ .x = 39150 - 40, .y = 0 }, .vel = .{ .x = 100, .y = 0 } },
     };
     stepFor(&world, 0.1);
     try testing.expect(world.ship.health < 100);
@@ -1280,7 +1282,7 @@ test "passing clear of every rock costs nothing" {
         .belt = .{ .rocks = &test_rock },
         // Same crossing, offset 100 px sideways: clears the 35 px contact
         // radius. Radial gate and bearing prefilter must not create hits.
-        .ship = .{ .pos = .{ .x = 23900, .y = 100 }, .vel = .{ .x = 100, .y = 0 } },
+        .ship = .{ .pos = .{ .x = 39050, .y = 100 }, .vel = .{ .x = 100, .y = 0 } },
     };
     stepFor(&world, 2.0);
     try testing.expectEqual(@as(f32, 100), world.ship.health);
@@ -1291,7 +1293,7 @@ test "rock collision damage clamps health at zero" {
     var world: World = .{
         .planets = &.{},
         .belt = .{ .rocks = &test_rock },
-        .ship = .{ .pos = .{ .x = 24000 - 40, .y = 0 }, .vel = .{ .x = 100, .y = 0 }, .health = 0.5 },
+        .ship = .{ .pos = .{ .x = 39150 - 40, .y = 0 }, .vel = .{ .x = 100, .y = 0 }, .health = 0.5 },
     };
     stepFor(&world, 0.5);
     try testing.expectEqual(@as(f32, 0), world.ship.health);

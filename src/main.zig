@@ -31,8 +31,8 @@ const screen_h = 700;
 const foreground_fps: i32 = 60;
 const unfocused_fps: i32 = 15;
 
-// Belt rock arrays — file scope, not run()'s stack: ~240 KB of colliders
-// plus ~850 KB of outlines would be a big bite out of the wasm stack.
+// Belt rock arrays — file scope, not run()'s stack: ~590 KB of colliders
+// plus ~2.1 MB of outlines would be a big bite out of the wasm stack.
 var belt_rocks: [sim.Belt.Band.asteroid.count]sim.Belt.Rock = undefined;
 var belt_visuals: render.AsteroidBelt = undefined;
 var kuiper_rocks: [sim.Belt.Band.kuiper.count]sim.Belt.Rock = undefined;
@@ -51,28 +51,35 @@ const Orbit = sim.Orbit;
 /// Scripted Kepler ellipse of each body, index-aligned with the planets array
 /// (null = the sun, which sits still at the origin). Parents must precede
 /// their children so updateOrbits reads fresh parent state within one pass.
-/// Mean motions are a few percent of the physically correct rate for each
-/// altitude (~10% before the great mass increase, see config.zig) —
-/// the same arcade slowdown the moon always had, keeping Keplerian ordering
-/// (inner planets visibly outpace outer ones) while an SOI never outruns a
-/// ship trying to get captured. Eccentricities are the real ones where they
-/// fit, capped where this compressed system lacks the room (real Mercury is
-/// e=0.21, real Mars 0.09; the giants sit far too close together here for
-/// their true values): each body's apoapsis-plus-SOI must leave clear water
-/// before the next body's periapsis-minus-SOI (e.g. Venus tops out at 11565
-/// from the sun, Earth's band begins at 11758) so patched conics stay
-/// unambiguous. Periapsis directions are the real longitudes of perihelion.
+/// Heliocentric distances are to real scale: Earth's 14500 is 1 AU and every
+/// sun-orbiting body sits at its true semi-major-axis ratio (Mars 1.52 AU,
+/// Jupiter 5.2, Neptune 30.1, Eris 67.9). Mean motions are a few percent of
+/// the physically correct rate for each altitude (~10% before the great mass
+/// increase, see config.zig) — the same arcade slowdown the moon always had,
+/// keeping Keplerian ordering (inner planets visibly outpace outer ones)
+/// while an SOI never outruns a ship trying to get captured. At real spacing
+/// the eccentricities are the real ones too — the room the old compressed
+/// layout lacked for Mercury's 0.21 or Mars' 0.09 is there now — except
+/// Pluto's (see the dwarf block below). The rule stands: each body's
+/// apoapsis-plus-SOI must leave clear water before the next body's
+/// periapsis-minus-SOI so patched conics stay unambiguous. The one radial
+/// near-miss is Venus–Earth, genuinely the tightest pair in the real system:
+/// Venus tops out at 12574, Earth's band begins at 11754. Their SOI disks
+/// can only touch near inferior conjunction with both at their extremes, and
+/// even then dominantIndex resolves the overlap deterministically (smallest
+/// SOI wins), so the ambiguity is theoretical. Periapsis directions are the
+/// real longitudes of perihelion.
 const orbits = [_]?Orbit{
     null, // sun
-    .{ .parent = 0, .semi_major = 5500, .omega = 0.0027, .phase = 2.0, .ecc = 0.15, .peri = 1.35 }, // mercury
-    .{ .parent = 0, .semi_major = 9500, .omega = 0.0012, .phase = 4.2, .ecc = 0.007, .peri = 2.30 }, // venus
+    .{ .parent = 0, .semi_major = 5600, .omega = 0.0025, .phase = 2.0, .ecc = 0.206, .peri = 1.35 }, // mercury
+    .{ .parent = 0, .semi_major = 10500, .omega = 0.00097, .phase = 4.2, .ecc = 0.007, .peri = 2.30 }, // venus
     .{ .parent = 0, .semi_major = 14500, .omega = 0.0006, .phase = 0.0, .ecc = 0.017, .peri = 1.80 }, // earth
     .{ .parent = earth_idx, .semi_major = 1500, .omega = 0.008, .phase = -0.4, .ecc = 0.055, .peri = 5.55 }, // moon
-    .{ .parent = 0, .semi_major = 20000, .omega = 0.0004, .phase = 5.3, .ecc = 0.05, .peri = 5.87 }, // mars
-    .{ .parent = 0, .semi_major = 28000, .omega = 0.00024, .phase = 1.2, .ecc = 0.012, .peri = 0.26 }, // jupiter
-    .{ .parent = 0, .semi_major = 38500, .omega = 0.00015, .phase = 3.6, .ecc = 0.007, .peri = 1.61 }, // saturn
-    .{ .parent = 0, .semi_major = 46500, .omega = 0.00011, .phase = 0.9, .ecc = 0.003, .peri = 2.98 }, // uranus
-    .{ .parent = 0, .semi_major = 53500, .omega = 0.00009, .phase = 4.8, .ecc = 0.005, .peri = 0.79 }, // neptune
+    .{ .parent = 0, .semi_major = 22100, .omega = 0.00032, .phase = 5.3, .ecc = 0.093, .peri = 5.87 }, // mars
+    .{ .parent = 0, .semi_major = 75400, .omega = 0.000051, .phase = 1.2, .ecc = 0.048, .peri = 0.26 }, // jupiter
+    .{ .parent = 0, .semi_major = 138900, .omega = 0.00002, .phase = 3.6, .ecc = 0.056, .peri = 1.61 }, // saturn
+    .{ .parent = 0, .semi_major = 278600, .omega = 0.0000071, .phase = 0.9, .ecc = 0.046, .peri = 2.98 }, // uranus
+    .{ .parent = 0, .semi_major = 436600, .omega = 0.0000036, .phase = 4.8, .ecc = 0.011, .peri = 0.79 }, // neptune
     // Moons of Mars and Jupiter, compressed to fit their parent's SOI the same
     // way the planets are compressed to fit the sun's. Shapes are realistic:
     // eccentricities are the real ones (all of these moons ride nearly perfect
@@ -89,18 +96,19 @@ const orbits = [_]?Orbit{
     .{ .parent = 6, .semi_major = 4150, .omega = 0.0022, .phase = 1.9, .ecc = 0.007, .peri = 5.80 }, // callisto
     // Kuiper dwarfs: visibly eccentric ellipses wandering through the Kuiper
     // belt (see sim.Belt.Band.kuiper), mean motions on the same arcade Kepler
-    // curve as the planets. Eccentricities are the real ones where they fit;
-    // Pluto (real e=0.25) and Eris (0.44) are capped like Mercury and Mars,
-    // pushed out so their periapsides clear Neptune's apoapsis-plus-SOI
-    // (~57000) — real Pluto dips inside Neptune's orbit, but patched conics
-    // want clear water between planet-sized SOIs. The dwarfs' own bands
-    // overlap each other, as in reality; their SOI bubbles are so small that
-    // a dwarf–dwarf close approach is a non-event. Periapsis directions are
-    // the real longitudes of perihelion.
-    .{ .parent = 0, .semi_major = 68000, .omega = 0.000063, .phase = 2.5, .ecc = 0.14, .peri = 3.91 }, // pluto
-    .{ .parent = 0, .semi_major = 73000, .omega = 0.000056, .phase = 5.6, .ecc = 0.19, .peri = 0.02 }, // haumea
-    .{ .parent = 0, .semi_major = 77500, .omega = 0.000052, .phase = 1.1, .ecc = 0.16, .peri = 0.25 }, // makemake
-    .{ .parent = 0, .semi_major = 100000, .omega = 0.000035, .phase = 3.8, .ecc = 0.35, .peri = 3.27 }, // eris
+    // curve as the planets, semi-majors at the real AU ratios (Pluto 39.5,
+    // Haumea 43.1, Makemake 45.4, Eris 67.9). Eccentricities are the real
+    // ones — including, at last, Eris' wild 0.44 — except Pluto's, trimmed
+    // from the real 0.25 to 0.22 so its periapsis clears Neptune's
+    // apoapsis-plus-SOI (~444600): real Pluto dips inside Neptune's orbit,
+    // but patched conics want clear water between planet-sized SOIs. The
+    // dwarfs' own bands overlap each other, as in reality; their SOI bubbles
+    // are so small that a dwarf–dwarf close approach is a non-event.
+    // Periapsis directions are the real longitudes of perihelion.
+    .{ .parent = 0, .semi_major = 572500, .omega = 0.0000024, .phase = 2.5, .ecc = 0.22, .peri = 3.91 }, // pluto
+    .{ .parent = 0, .semi_major = 625000, .omega = 0.0000021, .phase = 5.6, .ecc = 0.195, .peri = 0.02 }, // haumea
+    .{ .parent = 0, .semi_major = 658500, .omega = 0.0000020, .phase = 1.1, .ecc = 0.16, .peri = 0.25 }, // makemake
+    .{ .parent = 0, .semi_major = 984500, .omega = 0.0000011, .phase = 3.8, .ecc = 0.44, .peri = 3.27 }, // eris
 };
 
 comptime {
@@ -462,9 +470,9 @@ fn run(init: std.process.Init.Minimal) !void {
         // Keep the camera centred on the current window size.
         const wheel = in.wheel;
         if (in.zoom_modifier) {
-            // Floor fits the whole system: Eris tops out near r=135700 plus
-            // its SOI, so ~273000 units across; 0.0035 shows that in one window.
-            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.0035, 4.0);
+            // Floor fits the whole system: Eris tops out near r=1418400 plus
+            // its SOI, so ~2840000 units across; 0.00034 shows that in one window.
+            if (wheel.y != 0) cam.zoom = std.math.clamp(cam.zoom * (1.0 + wheel.y * 0.1), 0.00034, 4.0);
         } else if (wheel.x != 0 or wheel.y != 0) {
             // Content follows the fingers: a wheel unit moves the view a
             // fixed number of screen px regardless of zoom.
