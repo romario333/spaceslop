@@ -38,23 +38,15 @@ var belt_visuals: render.AsteroidBelt = undefined;
 var kuiper_rocks: [sim.Belt.Band.kuiper.count]sim.Belt.Rock = undefined;
 var kuiper_visuals: render.KuiperBelt = undefined;
 
+/// The ship's predicted coast path — ~60 KB of points, so file scope like
+/// the belt arrays rather than run()'s stack.
+var trajectory: sim.Trajectory = .{};
+
 /// Index of Earth in the canonical body order (see cfg.names); the ship
 /// spawns there and the ISS orbits it.
 const earth_idx = 3;
 
-const Orbit = struct {
-    parent: usize,
-    /// Semi-major axis in world px.
-    semi_major: f32,
-    /// Mean motion: average angular rate over one revolution, rad/s.
-    omega: f32,
-    /// Mean anomaly at t = 0 — where along the orbit the body starts.
-    phase: f32,
-    /// Eccentricity of the ellipse; the parent sits at a focus, not the centre.
-    ecc: f32,
-    /// Argument of periapsis: world angle of the closest-approach direction.
-    peri: f32,
-};
+const Orbit = sim.Orbit;
 
 /// Scripted Kepler ellipse of each body, index-aligned with the planets array
 /// (null = the sun, which sits still at the origin). Parents must precede
@@ -115,28 +107,9 @@ comptime {
     std.debug.assert(orbits.len == cfg.names.len);
 }
 
-/// Advance every scripted orbit by `dt` and refresh each body's kinematic
-/// state: position on its ellipse, world velocity, and frame acceleration
-/// (the parent's acceleration plus the Kepler pull toward it). The
-/// acceleration is what lets ships inside a moving SOI ride along with the
-/// body (see sim.Planet.acc). `angles` holds each body's mean anomaly, which
-/// grows uniformly; keplerState turns it into the unevenly-paced true motion.
+/// Advance every scripted orbit by `dt` (see sim.updateOrbits).
 fn updateOrbits(planets: []sim.Planet, angles: []f32, dt: f32) void {
-    for (orbits, 0..) |maybe_orbit, i| {
-        const o = maybe_orbit orelse continue;
-        angles[i] = @mod(angles[i] + o.omega * dt, std.math.tau);
-        const parent = planets[o.parent];
-        const local = sim.keplerState(o.semi_major, o.ecc, o.omega, angles[i]);
-        const rel = local.pos.rotated(o.peri);
-        planets[i].pos = parent.pos.add(rel);
-        planets[i].vel = parent.vel.add(local.vel.rotated(o.peri));
-        // Exact gravitational acceleration of the scripted ellipse: toward
-        // the focus with μ = n²a³ (Kepler's third law), so riding ships see
-        // a consistent frame at periapsis and apoapsis alike.
-        const dist = rel.len();
-        const mu = o.omega * o.omega * o.semi_major * o.semi_major * o.semi_major;
-        planets[i].acc = parent.acc.add(rel.scale(-mu / (dist * dist * dist)));
-    }
+    sim.updateOrbits(&orbits, planets, angles, dt);
 }
 
 /// Tunables for the edge-arrow relevance filter (see edgeArrowMask).
@@ -364,6 +337,9 @@ fn run(init: std.process.Init.Minimal) !void {
     // layout, and the rings are a physics-debugging overlay you turn on (O)
     // when you want to see exactly where gravity hands over.
     var show_soi = false;
+    // The predicted flight path starts visible — it's the main flying aid —
+    // and P hides it for purists.
+    var show_prediction = true;
     var detail: DetailPanel = .{};
     // Where the view sits relative to the followed body, in world px. Keeping
     // it relative means the camera still rides along with the body while you
@@ -473,6 +449,7 @@ fn run(init: std.process.Init.Minimal) !void {
         if (!is_web and in.fullscreen) rl.toggleFullscreen();
         if (in.cycle_theme) theme = theme.next();
         if (in.toggle_soi) show_soi = !show_soi;
+        if (in.toggle_prediction) show_prediction = !show_prediction;
         // One flare at a time; the key is ignored while one is in flight.
         if (in.flare and world.flare == null) {
             world.triggerFlare(flare_prng.random().float(f32) * std.math.tau);
@@ -585,6 +562,9 @@ fn run(init: std.process.Init.Minimal) !void {
             iss_angle = @mod(iss_angle + iss_omega * fixed_dt, std.math.tau);
             dbg.step_count += 1;
         }
+        // Predicted coast, recomputed every frame: a burn reshapes it live,
+        // and the detail panel can retune masses/SOIs even while paused.
+        if (show_prediction) trajectory.predict(&world, &orbits, &angles, fixed_dt);
         // A selected planet becomes the frame of reference: the camera rides
         // along with it, so the ship's motion reads relative to that body.
         // Deselecting (click it again, or click empty space) returns to the
@@ -613,6 +593,7 @@ fn run(init: std.process.Init.Minimal) !void {
             }
 
             trail.draw(&planets, cam);
+            if (show_prediction) render.drawTrajectory(&trajectory, &planets, cam);
 
             // Under the planets: a rock passing behind Jupiter should occlude
             // like the background object it is.
@@ -626,10 +607,13 @@ fn run(init: std.process.Init.Minimal) !void {
 
             // Sphere-of-influence boundaries (toggle with O). Only the body
             // whose ring you are inside pulls on the ship; outside Earth's
-            // ring nothing does.
+            // ring nothing does. Stroke width is fixed in *screen* px so the
+            // rings stay visible zoomed all the way out; capped at half the
+            // SOI so a tiny moon's ring never inverts into a filled disc.
             if (show_soi) {
                 for (planets) |p| {
-                    rl.drawRing(v(p.pos), p.soi - 1.5, p.soi + 1.5, 0, 360, 240, .{ .r = 170, .g = 140, .b = 255, .a = 110 });
+                    const half = @min(1.5 / cam.zoom, p.soi * 0.5);
+                    rl.drawRing(v(p.pos), p.soi - half, p.soi + half, 0, 360, 240, .{ .r = 170, .g = 140, .b = 255, .a = 110 });
                 }
             }
 

@@ -89,7 +89,7 @@ commands are consumed one per rendered frame.
 | `clickw <wx> <wy> [hold]` | same, world coordinates — `clickw 0 0` hits Earth |
 | `drag <x0> <y0> <x1> <y1> [frames]` | left-button drag: press at (x0,y0), glide linearly over `frames` frames (default 10), release at (x1,y1). Pans the view; ticks one frame per rendered frame, so wait `frames`/fps before reading `state` |
 | `dragw <wx0> <wy0> <wx1> <wy1> [frames]` | same, world coordinates |
-| `key <name> [frames]` | hold `w/a/d/up/left/right/thrust` for n physics-stepping frames; `r/t/o/f` are one-shots |
+| `key <name> [frames]` | hold `w/a/d/up/left/right/thrust` for n physics-stepping frames; `r/t/o/f/p` are one-shots |
 | `wheel <dx> <dy>` | one frame of scroll (pans) |
 | `zoom <dy>` | one frame of cmd+scroll (zooms) |
 | `pause` / `resume` | freeze/unfreeze physics; rendering and the bridge keep running |

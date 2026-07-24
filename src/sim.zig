@@ -67,6 +67,51 @@ pub fn keplerState(a: f32, e: f32, n: f32, m: f32) KeplerState {
     };
 }
 
+/// A scripted Kepler ellipse tying one body to a parent body: the shape of
+/// the orbit plus where along it the body starts. The world's planets are
+/// pure kinematics riding these (see updateOrbits) — nothing perturbs them,
+/// which is what lets the trajectory prediction know exactly where every
+/// body will be at any future time.
+pub const Orbit = struct {
+    parent: usize,
+    /// Semi-major axis in world px.
+    semi_major: f32,
+    /// Mean motion: average angular rate over one revolution, rad/s.
+    omega: f32,
+    /// Mean anomaly at t = 0 — where along the orbit the body starts.
+    phase: f32,
+    /// Eccentricity of the ellipse; the parent sits at a focus, not the centre.
+    ecc: f32,
+    /// Argument of periapsis: world angle of the closest-approach direction.
+    peri: f32,
+};
+
+/// Advance every scripted orbit by `dt` and refresh each body's kinematic
+/// state: position on its ellipse, world velocity, and frame acceleration
+/// (the parent's acceleration plus the Kepler pull toward it). The
+/// acceleration is what lets ships inside a moving SOI ride along with the
+/// body (see Planet.acc). `specs` is index-aligned with `planets` (null =
+/// a static root body); parents must precede their children so one pass
+/// reads fresh parent state. `angles` holds each body's mean anomaly, which
+/// grows uniformly; keplerState turns it into the unevenly-paced true motion.
+pub fn updateOrbits(specs: []const ?Orbit, planets: []Planet, angles: []f32, dt: f32) void {
+    for (specs, 0..) |maybe_orbit, i| {
+        const o = maybe_orbit orelse continue;
+        angles[i] = @mod(angles[i] + o.omega * dt, std.math.tau);
+        const parent = planets[o.parent];
+        const local = keplerState(o.semi_major, o.ecc, o.omega, angles[i]);
+        const rel = local.pos.rotated(o.peri);
+        planets[i].pos = parent.pos.add(rel);
+        planets[i].vel = parent.vel.add(local.vel.rotated(o.peri));
+        // Exact gravitational acceleration of the scripted ellipse: toward
+        // the focus with μ = n²a³ (Kepler's third law), so riding ships see
+        // a consistent frame at periapsis and apoapsis alike.
+        const dist = rel.len();
+        const mu = o.omega * o.omega * o.semi_major * o.semi_major * o.semi_major;
+        planets[i].acc = parent.acc.add(rel.scale(-mu / (dist * dist * dist)));
+    }
+}
+
 pub const Planet = struct {
     pos: Vec2,
     mass: f32,
@@ -558,25 +603,7 @@ pub const World = struct {
 
         self.ship.angle += input.turn * turn_rate * dt;
 
-        var acc = self.gravityAt(self.ship.pos);
-        if (self.dominantIndex(self.ship.pos)) |idx| {
-            const p = self.planets[idx];
-            // Ride along with a moving SOI owner (see Planet.acc).
-            acc = acc.add(p.acc);
-            // Capture assist — satellites only (planets[0] is the root body;
-            // dragging inside its SOI would decay every heliocentric orbit).
-            // Applies only to ships that are bound to the body (negative
-            // relative energy) in the outer SOI; fast hyperbolic flybys keep
-            // full slingshot behaviour.
-            if (idx > 0) {
-                const dist = self.ship.pos.sub(p.pos).len();
-                if (dist > capture_zone * p.soi) {
-                    const v_rel = self.ship.vel.sub(p.vel);
-                    const energy = v_rel.lenSq() / 2.0 - g * p.mass / @max(dist, @max(p.radius, p.core));
-                    if (energy < 0) acc = acc.add(v_rel.scale(-capture_drag));
-                }
-            }
-        }
+        var acc = self.ballisticAccel(self.ship.pos, self.ship.vel);
         // Thrusters only fire with propellant in the tank. The flags track
         // what actually fires, so engine flames die with the fuel.
         const has_fuel = self.ship.fuel > 0;
@@ -687,10 +714,223 @@ pub const World = struct {
         }
     }
 
+    /// Acceleration a coasting ship feels at `pos` moving at `vel`:
+    /// patched-conic gravity, the SOI owner's frame acceleration, and
+    /// capture-assist drag — every force except thrust. Split out of `step`
+    /// so the trajectory prediction integrates exactly what the live sim
+    /// applies to a ballistic ship.
+    pub fn ballisticAccel(self: World, pos: Vec2, vel: Vec2) Vec2 {
+        var acc = self.gravityAt(pos);
+        if (self.dominantIndex(pos)) |idx| {
+            const p = self.planets[idx];
+            // Ride along with a moving SOI owner (see Planet.acc).
+            acc = acc.add(p.acc);
+            // Capture assist — satellites only (planets[0] is the root body;
+            // dragging inside its SOI would decay every heliocentric orbit).
+            // Applies only to ships that are bound to the body (negative
+            // relative energy) in the outer SOI; fast hyperbolic flybys keep
+            // full slingshot behaviour.
+            if (idx > 0) {
+                const dist = pos.sub(p.pos).len();
+                if (dist > capture_zone * p.soi) {
+                    const v_rel = vel.sub(p.vel);
+                    const energy = v_rel.lenSq() / 2.0 - g * p.mass / @max(dist, @max(p.radius, p.core));
+                    if (energy < 0) acc = acc.add(v_rel.scale(-capture_drag));
+                }
+            }
+        }
+        return acc;
+    }
+
     /// Speed needed for a circular orbit at `radius` around a planet of `mass`.
     /// Handy for placing the ship in a stable starting orbit.
     pub fn circularOrbitSpeed(mass: f32, radius: f32) f32 {
         return @sqrt(g * mass / radius);
+    }
+};
+
+/// A position remembered in the reference frame that owned it: stored as an
+/// offset from the dominant SOI body (absolute in deep space), so it rides
+/// along with that body instead of staying pinned where the body used to be
+/// — or, for predicted points, where it will be. In the outer band of an SOI
+/// the point also keeps an offset in the enclosing frame and the two are
+/// blended, so a path crossing an SOI boundary deforms as a smooth curve
+/// instead of kinking where the anchor switches. Shared by the ship trail
+/// (past positions) and the trajectory prediction (future positions).
+pub const FramePoint = struct {
+    /// Fraction of the SOI radius where blending toward the enclosing frame
+    /// begins; at the edge itself a point rides the enclosing frame entirely,
+    /// which matches the first point captured on the other side.
+    pub const blend_band = 0.8;
+
+    /// Offset from the anchor body (absolute position when anchor is null).
+    off: Vec2,
+    /// Offset from the enclosing body (absolute when enclosing is null).
+    off_outer: Vec2,
+    anchor: ?usize,
+    enclosing: ?usize,
+    /// 1 = fully anchor frame, 0 = fully enclosing frame.
+    blend: f32,
+
+    /// Record world position `p` relative to whatever body dominates it in
+    /// `world` — for the trail that is the live world, for a prediction the
+    /// scratch world advanced into the future.
+    pub fn capture(world: *const World, p: Vec2) FramePoint {
+        var pt = FramePoint{ .off = p, .off_outer = p, .anchor = null, .enclosing = null, .blend = 1 };
+        if (world.dominantIndex(p)) |a| {
+            const body = world.planets[a];
+            pt.anchor = a;
+            pt.off = p.sub(body.pos);
+            const edge = p.sub(body.pos).len() / body.soi;
+            const raw = std.math.clamp((1.0 - edge) / (1.0 - blend_band), 0.0, 1.0);
+            pt.blend = raw * raw * (3.0 - 2.0 * raw);
+            if (pt.blend < 1.0) {
+                pt.enclosing = world.enclosingIndex(p, a);
+                if (pt.enclosing) |e| pt.off_outer = p.sub(world.planets[e].pos);
+            }
+        }
+        return pt;
+    }
+
+    /// The point mapped back to world space against wherever its anchor
+    /// bodies sit in `planets` now — usually not where they were (or will
+    /// be) at capture time. That relocation is the whole trick: an orbit
+    /// predicted around a moving moon draws as an ellipse around the moon's
+    /// current position.
+    pub fn resolve(self: FramePoint, planets: []const Planet) Vec2 {
+        const inner = if (self.anchor) |a| planets[a].pos.add(self.off) else self.off;
+        if (self.blend >= 1.0) return inner;
+        const outer = if (self.enclosing) |e| planets[e].pos.add(self.off_outer) else self.off_outer;
+        return outer.add(inner.sub(outer).scale(self.blend));
+    }
+};
+
+/// The ship's predicted coast: where it goes from here with the engines off.
+/// `predict` forward-integrates a scratch copy of the world — same
+/// semi-implicit Euler, same forces (ballisticAccel), planets advanced along
+/// their scripted ellipses — and stores the path as FramePoints, so the
+/// renderer can draw each future position relative to where its dominant
+/// body is *now*. Recomputed every frame; cheap enough because the timestep
+/// adapts to the local orbital timescale (see the `dyn_divisor` comment).
+pub const Trajectory = struct {
+    /// Path resolution cap. Sampling is time-based (`horizon / max_points`),
+    /// so a short orbit gets densely spaced points and a long transfer
+    /// spreads the same budget thin — where it is drawn zoomed out anyway.
+    pub const max_points = 1024;
+    /// Upper bound on world size, so predict needs no allocator or caller
+    /// scratch space.
+    pub const max_bodies = 32;
+    /// How far ahead an unbound (escape / deep space) coast is integrated,
+    /// sim-seconds. Sized to cover a heliocentric hop to a neighbouring
+    /// planet (a Mars transfer half-ellipse is ~6 min of sim time).
+    pub const max_horizon: f32 = 420.0;
+    /// A bound orbit is predicted for just over one revolution: enough to
+    /// close the loop on screen without moiré from overdrawn precessing laps.
+    const loop_fraction: f32 = 1.1;
+    /// The integration step is the local dynamical time sqrt(r³/μ) divided
+    /// by this. 240 matches the live sim's own accuracy — the spawn orbit
+    /// runs at r³/μ ≈ 2 s against the 1/120 s fixed step — so deep in a well
+    /// the prediction steps exactly like the sim, and in the slow far field
+    /// it takes strides up to `max_dt_factor` bigger for the same phase
+    /// error per orbit.
+    const dyn_divisor: f32 = 240.0;
+    const max_dt_factor: f32 = 16.0;
+    /// Between exact Kepler resyncs the planets coast on their stored
+    /// velocity. The fastest bodies move ~20 px/s with centripetal
+    /// acceleration under 0.5 px/s², so a second of linear drift stays
+    /// well under a pixel — and the resync recomputes positions absolutely
+    /// from the mean anomalies, so error never accumulates.
+    const resync_interval: f32 = 1.0;
+
+    points: [max_points]FramePoint = undefined,
+    /// Sim-seconds into the future of each point; times[0] = 0, the ship now.
+    times: [max_points]f32 = undefined,
+    count: usize = 0,
+    /// Body the coast ends on when the path hits a surface, else null.
+    impact: ?usize = null,
+
+    /// Integrate the ship's engines-off future from the live `world` state.
+    /// `specs`/`angles` are the scripted-orbit table and current mean
+    /// anomalies (see updateOrbits); `base_dt` is the sim's fixed timestep.
+    pub fn predict(self: *Trajectory, world: *const World, specs: []const ?Orbit, angles: []const f32, base_dt: f32) void {
+        self.count = 0;
+        self.impact = null;
+        if (!world.ship.alive()) return;
+        std.debug.assert(world.planets.len <= max_bodies);
+
+        // Scratch copies to march into the future; the caller's world is
+        // untouched.
+        var planets: [max_bodies]Planet = undefined;
+        var ang: [max_bodies]f32 = undefined;
+        const n = world.planets.len;
+        @memcpy(planets[0..n], world.planets);
+        @memcpy(ang[0..n], angles[0..n]);
+        var w: World = .{ .planets = planets[0..n], .ship = world.ship };
+
+        // Horizon: just over one lap of a bound orbit, else the transfer cap.
+        var horizon: f32 = max_horizon;
+        if (world.dominantIndex(world.ship.pos)) |i| {
+            const shape = world.orbitAround(i);
+            if (shape.bound) {
+                const a = (shape.peri + shape.apo) / 2.0;
+                const period = std.math.tau * @sqrt(a * a * a / (World.g * world.planets[i].mass));
+                horizon = @min(loop_fraction * period, max_horizon);
+            }
+        }
+        const sample_dt = horizon / @as(f32, @floatFromInt(max_points - 1));
+
+        var pos = world.ship.pos;
+        var vel = world.ship.vel;
+        self.push(&w, pos, 0);
+        var t: f32 = 0;
+        var next_sample = sample_dt;
+        var since_resync: f32 = 0;
+        while (t < horizon and self.count < max_points) {
+            // Step size from the local dynamical time (see dyn_divisor).
+            var dt = base_dt * max_dt_factor;
+            if (w.dominantIndex(pos)) |i| {
+                const p = planets[i];
+                const r = @max(pos.sub(p.pos).len(), @max(p.radius, p.core));
+                const t_dyn = @sqrt(r * r * r / (World.g * p.mass));
+                dt = std.math.clamp(t_dyn / dyn_divisor, base_dt, base_dt * max_dt_factor);
+            }
+
+            // Planets first, then the ship — the order the live loop uses.
+            since_resync += dt;
+            if (since_resync >= resync_interval) {
+                updateOrbits(specs, planets[0..n], ang[0..n], since_resync);
+                since_resync = 0;
+            } else {
+                for (planets[0..n]) |*p| p.pos = p.pos.add(p.vel.scale(dt));
+            }
+
+            const acc = w.ballisticAccel(pos, vel);
+            vel = vel.add(acc.scale(dt)); // velocity first...
+            pos = pos.add(vel.scale(dt)); // ...then position, like step()
+            t += dt;
+
+            // A coast that meets a surface ends there, like the ship would.
+            if (w.dominantIndex(pos)) |i| {
+                const p = planets[i];
+                if (pos.sub(p.pos).len() < p.radius + Ship.radius) {
+                    self.impact = i;
+                    self.push(&w, pos, t);
+                    return;
+                }
+            }
+
+            if (t >= next_sample) {
+                self.push(&w, pos, t);
+                next_sample += sample_dt;
+            }
+        }
+    }
+
+    fn push(self: *Trajectory, w: *const World, p: Vec2, t: f32) void {
+        if (self.count == max_points) return;
+        self.points[self.count] = FramePoint.capture(w, p);
+        self.times[self.count] = t;
+        self.count += 1;
     }
 };
 
@@ -1258,5 +1498,120 @@ test "rockPos matches rockState position" {
             try testing.expectEqual(full.x, fast.x);
             try testing.expectEqual(full.y, fast.y);
         }
+    }
+}
+
+test "updateOrbits keeps a scripted body on its ellipse" {
+    var planets = [_]Planet{
+        .{ .pos = .{}, .mass = 100000, .radius = 600 }, // static root
+        .{ .pos = .{}, .mass = 8000, .radius = 140 },
+    };
+    const specs = [_]?Orbit{
+        null,
+        .{ .parent = 0, .semi_major = 1000, .omega = 0.01, .phase = 0, .ecc = 0, .peri = 0 },
+    };
+    var angles = [_]f32{ 0, specs[1].?.phase };
+    updateOrbits(&specs, &planets, &angles, 0); // initial placement
+    try testing.expectApproxEqRel(@as(f32, 1000), planets[1].pos.x, 1e-5);
+
+    // A circular orbit paces uniformly: after dt the body sits at mean
+    // anomaly omega*dt on the circle, moving tangentially at omega*a.
+    updateOrbits(&specs, &planets, &angles, 25);
+    try testing.expectApproxEqRel(1000 * @cos(0.25), planets[1].pos.x, 1e-4);
+    try testing.expectApproxEqRel(1000 * @sin(0.25), planets[1].pos.y, 1e-4);
+    try testing.expectApproxEqRel(@as(f32, 10), planets[1].vel.len(), 1e-4);
+    // Frame acceleration points back at the parent with mu = n^2 a^3.
+    try testing.expectApproxEqRel(@as(f32, 0.1), planets[1].acc.len(), 1e-4);
+    try testing.expect(planets[1].acc.dot(planets[1].pos) < 0);
+}
+
+test "trajectory prediction matches the live sim while coasting" {
+    // One static planet, ship deep in the well: the adaptive step clamps to
+    // base_dt there, so predict and the live loop run identical arithmetic.
+    const specs = [_]?Orbit{null};
+    var angles = [_]f32{0};
+    var planets = [_]Planet{.{ .pos = .{}, .mass = 8000, .radius = 140 }};
+    const r: f32 = 300;
+    var world: World = .{
+        .planets = &planets,
+        .ship = .{ .pos = .{ .x = r, .y = 0 }, .vel = .{ .x = 0, .y = World.circularOrbitSpeed(8000, r) } },
+    };
+
+    const base_dt: f32 = 1.0 / 120.0;
+    var traj: Trajectory = .{};
+    traj.predict(&world, &specs, &angles, base_dt);
+    try testing.expect(traj.count > 100);
+    try testing.expectEqual(@as(?usize, null), traj.impact);
+    try testing.expectEqual(@as(f32, 0), traj.times[0]);
+
+    // Replay the same span live, checking each sampled point as its time
+    // comes up. Same accumulation order as predict, so times land exactly.
+    var t: f32 = 0;
+    var k: usize = 1;
+    while (k < traj.count) {
+        world.step(base_dt, .{});
+        t += base_dt;
+        if (t >= traj.times[k]) {
+            const p = traj.points[k].resolve(&planets);
+            try testing.expectApproxEqAbs(world.ship.pos.x, p.x, 1e-2);
+            try testing.expectApproxEqAbs(world.ship.pos.y, p.y, 1e-2);
+            k += 1;
+        }
+    }
+
+    // The horizon covers just over one revolution, so the loop closes: the
+    // last point comes back near the first.
+    const first = traj.points[0].resolve(&planets);
+    const last = traj.points[traj.count - 1].resolve(&planets);
+    try testing.expect(last.sub(first).len() < r);
+}
+
+test "trajectory prediction ends on a surface impact" {
+    const specs = [_]?Orbit{null};
+    var angles = [_]f32{0};
+    var planets = [_]Planet{.{ .pos = .{}, .mass = 8000, .radius = 140 }};
+    const world: World = .{
+        .planets = &planets,
+        // Free fall straight down from 400 px out.
+        .ship = .{ .pos = .{ .x = 400, .y = 0 }, .vel = .{} },
+    };
+    var traj: Trajectory = .{};
+    traj.predict(&world, &specs, &angles, 1.0 / 120.0);
+    try testing.expectEqual(@as(?usize, 0), traj.impact);
+    const end = traj.points[traj.count - 1].resolve(&planets);
+    try testing.expectApproxEqAbs(140.0 + Ship.radius, end.len(), 5.0);
+}
+
+test "trajectory prediction rides a moving body" {
+    // A moon on a scripted circle; the ship orbits inside its SOI. If
+    // predict failed to advance the moon, the path would trail behind it and
+    // the moon-relative offsets would balloon by the moon's travel (~70 px
+    // over the horizon against a 150 px orbit).
+    const specs = [_]?Orbit{
+        null,
+        .{ .parent = 0, .semi_major = 1500, .omega = 0.008, .phase = 0.9, .ecc = 0, .peri = 0 },
+    };
+    var planets = [_]Planet{
+        .{ .pos = .{}, .mass = 0, .radius = 10 }, // massless static root
+        .{ .pos = .{}, .mass = 4000, .radius = 40, .soi = 400 },
+    };
+    var angles = [_]f32{ 0, specs[1].?.phase };
+    updateOrbits(&specs, &planets, &angles, 0);
+
+    const r: f32 = 150;
+    const moon = planets[1];
+    const world: World = .{
+        .planets = &planets,
+        .ship = .{
+            .pos = moon.pos.add(.{ .x = r }),
+            .vel = moon.vel.add(.{ .y = World.circularOrbitSpeed(moon.mass, r) }),
+        },
+    };
+    var traj: Trajectory = .{};
+    traj.predict(&world, &specs, &angles, 1.0 / 120.0);
+    try testing.expect(traj.count > 100);
+    for (traj.points[0..traj.count]) |pt| {
+        try testing.expectEqual(@as(?usize, 1), pt.anchor);
+        try testing.expect(@abs(pt.off.len() - r) < r * 0.1);
     }
 }
