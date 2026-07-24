@@ -37,11 +37,11 @@ pub fn hasServices(idx: usize) bool {
 
 pub const Config = struct {
     // The sun's SOI must contain every heliocentric orbit (see `orbits` in
-    // main.zig): Eris tops out near 135700. It reaches beyond that
-    // (150000) on purpose: crossing it is the point of no return (deep space,
-    // zero gravity), so the farther out it sits the closer "reach the edge"
-    // is to true escape velocity — one full tank must NOT be enough to leave
-    // the system (see World.fuel_burn for the budget math).
+    // main.zig): Eris tops out near 1418400. It reaches beyond that
+    // (1550000) on purpose: crossing it is the point of no return (deep
+    // space, zero gravity), so the farther out it sits the closer "reach the
+    // edge" is to true escape velocity — one full tank must NOT be enough to
+    // leave the system (see World.fuel_burn for the budget math).
     //
     // Masses are tuned as a set: the sun is heavy enough that solar escape
     // costs more delta-v than a full tank, planets are scaled to match so
@@ -50,7 +50,7 @@ pub const Config = struct {
     // home well weakens the Oberth discount on departure burns, which is
     // what separates the cost of "reach Mars" from the cost of "leave
     // forever" in the first place.
-    sun: PlanetConfig = .{ .mass = 320000, .radius = 600, .soi = 150000 },
+    sun: PlanetConfig = .{ .mass = 320000, .radius = 600, .soi = 1550000 },
     mercury: PlanetConfig = .{ .mass = 2500, .radius = 50, .soi = 900, .core = 90 },
     venus: PlanetConfig = .{ .mass = 7000, .radius = 130, .soi = 2000, .core = 145 },
     earth: PlanetConfig = .{ .mass = 8000, .radius = 140, .soi = 2500 },

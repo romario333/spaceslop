@@ -1,7 +1,7 @@
 .{ .sun = .{
     .mass = 320000,
     .radius = 600,
-    .soi = 150000,
+    .soi = 1550000,
     .core = 0,
 }, .mercury = .{
     .mass = 2500,
