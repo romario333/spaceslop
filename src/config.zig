@@ -40,12 +40,10 @@ pub const Config = struct {
     // main.zig): Eris tops out near 1418400. It reaches beyond that
     // (1550000) on purpose: crossing it is the point of no return (deep
     // space, zero gravity), so the farther out it sits the closer "reach the
-    // edge" is to true escape velocity — one full tank must NOT be enough to
-    // leave the system (see World.fuel_burn for the budget math).
+    // edge" is to true escape velocity.
     //
-    // Masses are tuned as a set: the sun is heavy enough that solar escape
-    // costs more delta-v than a full tank, planets are scaled to match so
-    // arriving transfers stay slow enough for capture assist to grab, and
+    // Masses are tuned as a set: planets are scaled so arriving transfers
+    // stay slow enough for capture assist to grab, and
     // the Earth system is deliberately lighter than the rest — a shallower
     // home well weakens the Oberth discount on departure burns, which is
     // what separates the cost of "reach Mars" from the cost of "leave
