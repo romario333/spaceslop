@@ -153,8 +153,8 @@ pub const Ship = struct {
     pub const radius: f32 = 15;
     /// Full hull: the spawn value, and the ceiling orbital repairs restore to.
     pub const max_health: f32 = 100;
-    /// Tank capacity at spawn — three base sections.
-    pub const start_tank: f32 = 300.0;
+    /// Tank capacity at spawn — one base section.
+    pub const start_tank: f32 = 100.0;
 
     pos: Vec2,
     vel: Vec2,
@@ -295,10 +295,8 @@ pub const Belt = struct {
         /// complacency is punished.
         pub const asteroid: Band = .{ .inner = 31900, .outer = 46400, .mid_omega = 0.00014, .count = 9000 };
         /// The Kuiper belt at its real 30–50 AU, past Neptune's
-        /// apoapsis-plus-SOI (~444600) and deep into the sun's outer SOI —
-        /// a full tank from Earth tops out far short of its inner rim, so
-        /// this is frontier scenery more than a gauntlet. Even 12000 rocks
-        /// over this vast an annulus is sparse like the real thing: a
+        /// apoapsis-plus-SOI (~444600) and deep into the sun's outer SOI.
+        /// Even 12000 rocks over this vast an annulus is sparse like the real thing: a
         /// straight crossing expects only ~0.14 hits. mid_omega is the same
         /// arcade Kepler rate carried out to r=580000.
         pub const kuiper: Band = .{ .inner = 435000, .outer = 725000, .mid_omega = 0.0000024, .count = 12000 };
@@ -403,10 +401,7 @@ pub const World = struct {
     /// Gameplay gravitational constant — tuned for pixels, not real-world units.
     /// Kept low so orbital speeds stay arcade-slow and steerable.
     pub const g: f32 = 1200.0;
-    /// Engine acceleration while thrusting, in px/s². A full-tank burn at
-    /// this accel lasts ~1.8 s against a ~13 s spawn-orbit period, short
-    /// enough that burns stay near-impulsive — long burns leak delta-v to
-    /// gravity losses and would silently eat the Mars budget.
+    /// Engine acceleration while thrusting, in px/s².
     pub const thrust_accel: f32 = 70.0;
     /// Turn speed in radians/second.
     pub const turn_rate: f32 = 2.8;
@@ -420,25 +415,13 @@ pub const World = struct {
     pub const capture_zone: f32 = 0.6;
     /// Propellant burned per second by each firing thruster — the main
     /// engine and the retro pair each cost this, so holding both burns
-    /// double. A full tank is ~1.8 s of single-thruster burn: ~127 px/s of
-    /// delta-v. Measured via the debug bridge (steered prograde burns from
-    /// the spawn orbit), a Mars-crossing ellipse takes ~90 px/s (capture
-    /// assist handles arrival), and a full tank flown perfectly coasts out
-    /// to only ~72000 px before falling back — that measurement predates the
-    /// realistic re-spacing but still holds, since the sun's mass and
-    /// Earth's orbit are unchanged. Under real AU spacing 72000 clears Mars
-    /// (22100) and the asteroid belt but falls short of even Jupiter
-    /// (75400): the giants and beyond are refuel-hop territory, not
-    /// single-tank trips, and no tank comes anywhere near escaping the
-    /// sun's 1550000 px SOI (gravity assists notwithstanding).
-    pub const fuel_burn: f32 = 55.0;
+    /// double. This is one fifth of the original burn rate, making each unit
+    /// of fuel five times as effective.
+    pub const fuel_burn: f32 = 11.0;
     /// Propellant taken on per second while parked at a body (see
-    /// serviceTarget) — a shade over twice the burn rate, so topping up a
-    /// drained tank costs a noticeable half-minute of parked time rather than
-    /// being an instant button.
+    /// serviceTarget).
     pub const refuel_rate: f32 = 12.0;
-    /// Hull points repaired per second in the same situation: a wreck-adjacent
-    /// hull takes about as long to patch as an empty tank takes to fill.
+    /// Hull points repaired per second in the same situation.
     pub const repair_rate: f32 = 4.0;
     /// Services are only offered close in: within one of the body's own
     /// diameters (2× its radius, or its softened core where that is bigger).
@@ -1455,11 +1438,11 @@ test "a body without services offers nothing however well parked" {
 
 test "parked services refill the tank and the hull, and stop when full" {
     var world = parkedWorld();
-    world.ship.fuel = 100;
+    world.ship.fuel = 25;
     world.ship.health = 40;
     const dt: f32 = 0.01;
     world.step(dt, .{ .refuel = true, .repair = true });
-    try testing.expectApproxEqRel(100 + World.refuel_rate * dt, world.ship.fuel, 1e-4);
+    try testing.expectApproxEqRel(25 + World.refuel_rate * dt, world.ship.fuel, 1e-4);
     try testing.expectApproxEqRel(40 + World.repair_rate * dt, world.ship.health, 1e-4);
     try testing.expect(world.ship.refuelling and world.ship.repairing);
 
