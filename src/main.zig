@@ -653,7 +653,7 @@ fn run(init: std.process.Init.Minimal) !void {
 
             // A destroyed ship isn't drawn — only the impact sparks below
             // mark the crash site until the player resets with R.
-            if (world.ship.alive()) render.drawShip(world.ship, sprites);
+            if (world.ship.alive()) render.drawShip(world.ship, sprites, cam.zoom);
             // Sparks for a moment after each hit (see Ship.hit_timer).
             if (world.ship.hit_timer > 0) {
                 render.drawBeltImpacts(world.ship.pos, world.belt.?.time);
