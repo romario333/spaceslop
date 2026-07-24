@@ -704,33 +704,49 @@ pub fn drawTrajectory(traj: *const sim.Trajectory, planets: []const sim.Planet, 
 /// against the (much bigger) planets.
 const ship_extra_scale: f32 = 1.5;
 
-pub fn drawShip(ship: sim.Ship, sprites: ?*const SpriteSet) void {
+/// Nose-to-tail length the ship never drops below on screen, whatever the
+/// zoom. Past that it collapses into a dot and you can no longer tell which
+/// way you're pointing, which makes the ship uncontrollable from the
+/// zoomed-out view.
+const ship_min_screen_px: f32 = 24.0;
+
+pub fn drawShip(ship: sim.Ship, sprites: ?*const SpriteSet, zoom: f32) void {
     const deg = ship.angle * 180.0 / std.math.pi;
+
+    // World length of the ship as normally drawn (sprite nose-to-tail, or the
+    // classic triangle's circumcircle). Everything below — body, flame and
+    // thruster offsets — scales up together by `boost` when that length would
+    // fall under ship_min_screen_px on screen.
+    const base_len: f32 = if (sprites) |s|
+        @as(f32, @floatFromInt(s.ship.width)) * s.px_scale * ship_extra_scale
+    else
+        52.0;
+    const boost = @max(1.0, ship_min_screen_px / (base_len * zoom));
 
     // Exhaust flame behind the ship while thrusting. The flame belongs to the
     // engine, not the sprites (see art/README.md), so it's drawn for every theme.
     const fwd = Vec2.fromAngle(ship.angle);
     if (ship.thrusting) {
-        const back = ship.pos.sub(fwd.scale(30.0));
-        rl.drawCircleV(v(back), 9.0, .{ .r = 255, .g = 170, .b = 40, .a = 255 });
+        const back = ship.pos.sub(fwd.scale(30.0 * boost));
+        rl.drawCircleV(v(back), 9.0 * boost, .{ .r = 255, .g = 170, .b = 40, .a = 255 });
     }
 
     // Retro burn: two small thrusters either side of the nose, firing forward.
     if (ship.braking) {
         const side: Vec2 = .{ .x = -fwd.y, .y = fwd.x };
-        const nose = ship.pos.add(fwd.scale(24.0));
+        const nose = ship.pos.add(fwd.scale(24.0 * boost));
         for ([_]f32{ -1, 1 }) |s| {
-            const jet = nose.add(side.scale(s * 7.0));
-            rl.drawCircleV(v(jet), 5.0, .{ .r = 120, .g = 200, .b = 255, .a = 255 });
+            const jet = nose.add(side.scale(s * 7.0 * boost));
+            rl.drawCircleV(v(jet), 5.0 * boost, .{ .r = 120, .g = 200, .b = 255, .a = 255 });
         }
     }
 
     if (sprites) |s| {
-        s.drawSprite(s.ship, ship.pos, deg, ship_extra_scale);
+        s.drawSprite(s.ship, ship.pos, deg, ship_extra_scale * boost);
     } else {
         // Classic body: a triangle whose leading vertex points along the heading.
-        rl.drawPoly(v(ship.pos), 3, 26.0, deg, .{ .r = 235, .g = 235, .b = 245, .a = 255 });
-        rl.drawPolyLines(v(ship.pos), 3, 26.0, deg, .{ .r = 120, .g = 140, .b = 170, .a = 255 });
+        rl.drawPoly(v(ship.pos), 3, 26.0 * boost, deg, .{ .r = 235, .g = 235, .b = 245, .a = 255 });
+        rl.drawPolyLines(v(ship.pos), 3, 26.0 * boost, deg, .{ .r = 120, .g = 140, .b = 170, .a = 255 });
     }
 }
 
